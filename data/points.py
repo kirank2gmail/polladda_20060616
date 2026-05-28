@@ -3,7 +3,7 @@ data/points.py
 Points calculation engine — uses local store.
 """
 
-from data.store import (
+from data.db import (
     get_tournament, get_registrations, get_votes, get_matches,
     save_points_batch, delete_match_points
 )
