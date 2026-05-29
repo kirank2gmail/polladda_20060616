@@ -1,8 +1,7 @@
 """
-app.py
-SportsPoll — no auth version.
-User picks their name from a list (or creates one).
-Admin access via a simple toggle for users with role=admin.
+app.py — SportsPoll
+No auth version. User picks name from list or creates one.
+All nav items in a single responsive row.
 """
 
 import streamlit as st
@@ -17,30 +16,45 @@ st.set_page_config(
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@300;400;500&display=swap');
-html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
-h1, h2, h3 { font-family: 'Syne', sans-serif !important; font-weight: 700 !important; }
-.stButton > button { border-radius: 8px; }
-.block-container { padding-top: 1.5rem; max-width: 1100px; }
+
+html, body, [class*="css"] {
+    font-family: 'DM Sans', sans-serif;
+}
+h1, h2, h3 {
+    font-family: 'Syne', sans-serif !important;
+    font-weight: 700 !important;
+}
+.block-container {
+    padding-top: 1rem;
+    max-width: 1100px;
+}
+
+/* Navbar button row — equal width, responsive */
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > button {
+    width: 100% !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-radius: 8px;
+    font-size: clamp(0.7rem, 1.5vw, 0.95rem);
+    padding: 0.35rem 0.5rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ── All imports at top ────────────────────────────────────────────────────────
 from data.db import get_all_users, create_user
 
 # ── Session defaults ──────────────────────────────────────────────────────────
-if "page"     not in st.session_state:
-    st.session_state["page"]     = "home"
-if "user"     not in st.session_state:
-    st.session_state["user"]     = None
-if "match_id" not in st.session_state:
-    st.session_state["match_id"] = None
+for key, val in [("page","home"), ("user",None), ("match_id",None), ("tournament_id",None)]:
+    if key not in st.session_state:
+        st.session_state[key] = val
 
 
-# ── Helper functions — defined BEFORE they are called ────────────────────────
+# ── Functions ─────────────────────────────────────────────────────────────────
 
 def show_user_picker():
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.markdown(
             "<h1 style='text-align:center;font-size:3rem;'>🏆 SportsPoll</h1>",
@@ -63,8 +77,7 @@ def show_user_picker():
                 st.info("No users yet — create one in the New User tab.")
             else:
                 chosen = st.selectbox("Select your name", names)
-                if st.button("Continue →", type="primary",
-                             use_container_width=True):
+                if st.button("Continue →", type="primary", use_container_width=True):
                     user = next(u for u in users if u["name"] == chosen)
                     st.session_state["user"] = user
                     st.rerun()
@@ -72,45 +85,50 @@ def show_user_picker():
         with tab_new:
             new_name = st.text_input("Your name", placeholder="Enter your name")
             is_admin = st.checkbox("Admin access")
-            if st.button("Create & Continue", type="primary",
-                         use_container_width=True):
+            if st.button("Create & Continue", type="primary", use_container_width=True):
                 if not new_name.strip():
                     st.error("Name cannot be empty.")
                 elif new_name.strip() in names:
                     st.error("Name already taken — sign in instead.")
                 else:
-                    role = "admin" if is_admin else "user"
+                    role     = "admin" if is_admin else "user"
                     new_user = create_user(new_name.strip(), role)
                     st.session_state["user"] = new_user
                     st.rerun()
 
 
 def render_navbar(user: dict):
-    c1, c2, c3 = st.columns([2, 5, 3])
+    is_admin = user.get("role") == "admin"
 
-    with c1:
-        if st.button("🏆 SportsPoll"):
-            st.session_state["page"] = "home"
-            st.rerun()
+    # Build nav items dynamically
+    nav_items = [
+        ("🏆 SportsPoll", "home"),
+        ("🏠 Home",        "home"),
+        ("🏅 Leaderboard", "leaderboard"),
+    ]
+    if is_admin:
+        nav_items.append(("⚙️ Admin", "admin"))
 
-    with c2:
-        b1, b2, b3 = st.columns(3)
-        if b1.button("🏠 Home"):
-            st.session_state["page"] = "home"
-            st.rerun()
-        if b2.button("🏅 Leaderboard"):
-            st.session_state["page"] = "leaderboard"
-            st.rerun()
-        if user.get("role") == "admin":
-            if b3.button("⚙️ Admin"):
-                st.session_state["page"] = "admin"
+    # Right side: user info + switch
+    # Total columns = nav items + 1 for user info
+    n      = len(nav_items)
+    widths = [1] * n + [2]   # user info column slightly wider
+    cols   = st.columns(widths)
+
+    for i, (label, page) in enumerate(nav_items):
+        with cols[i]:
+            if st.button(label, use_container_width=True,
+                         key=f"nav_{page}_{i}",
+                         type="primary" if st.session_state["page"] == page else "secondary"):
+                st.session_state["page"] = page
                 st.rerun()
 
-    with c3:
-        st.caption(f"👤 **{user['name']}**  ({user['role']})")
-        if st.button("Switch User"):
-            st.session_state["user"] = None
-            st.session_state["page"] = "home"
+    with cols[-1]:
+        st.caption(f"👤 **{user['name']}**")
+        if st.button("Switch User", use_container_width=True, key="switch_user"):
+            st.session_state["user"]     = None
+            st.session_state["page"]     = "home"
+            st.session_state["match_id"] = None
             st.rerun()
 
     st.markdown("---")
@@ -148,7 +166,7 @@ def route(user: dict):
         show_home(user)
 
 
-# ── Main flow — runs after all functions are defined ─────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 if not st.session_state["user"]:
     show_user_picker()
