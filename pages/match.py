@@ -1,6 +1,12 @@
 """
 pages/match.py
-Match detail — info, voting, poll, result breakdown.
+Match detail — voting, poll, result breakdown.
+
+Rules enforced:
+  1. Options must have at least 2 pipe-separated values (validated at admin entry)
+  2. Poll counts hidden from regular users while voting is open
+  3. Results section only shown after match start time (poll closed)
+  4. Admin sees poll and voter details at all times
 """
 
 import streamlit as st
@@ -19,11 +25,12 @@ def show_match(user: dict, match_id: str):
         st.error(f"Match not found: {match_id}")
         return
 
-    user_tz = user.get("timezone", "Asia/Kolkata") or "Asia/Kolkata"
-    options = [o.strip() for o in match["options"].split("|") if o.strip()]
-    times   = format_match_times(match, user_tz)
+    user_tz  = user.get("timezone", "Asia/Kolkata") or "Asia/Kolkata"
+    is_admin = user.get("role") == "admin"
+    options  = [o.strip() for o in match["options"].split("|") if o.strip()]
+    times    = format_match_times(match, user_tz)
     msg, sev = format_countdown(match)
-    voting  = is_voting_open(match)
+    voting   = is_voting_open(match)
 
     # ── Back ─────────────────────────────────────────────────────────────────
     if st.button("← Back"):
@@ -45,7 +52,7 @@ def show_match(user: dict, match_id: str):
     else:
         st.caption(f"UTC: {times['utc']}")
 
-    # ── Status ───────────────────────────────────────────────────────────────
+    # ── Status banner ─────────────────────────────────────────────────────────
     if sev == "error":
         st.error(msg)
     elif sev == "warning":
@@ -55,24 +62,28 @@ def show_match(user: dict, match_id: str):
 
     st.markdown("---")
 
-    # ── Voting ───────────────────────────────────────────────────────────────
-    if match["status"] == "upcoming":
+    # ── Voting (only while poll open) ─────────────────────────────────────────
+    if voting:
         if not is_registered(user["user_id"], match["tournament_id"]):
             st.warning("Register for this tournament to vote.")
         else:
-            _voting_section(match, options, user, user_tz, voting)
+            _voting_section(match, options, user, user_tz)
+    elif match["status"] == "upcoming":
+        st.info("⏸️ Voting closed — result pending from admin.")
 
-    # ── Poll ─────────────────────────────────────────────────────────────────
+    # ── Poll summary ──────────────────────────────────────────────────────────
     st.markdown("---")
-    _poll_summary(match_id, options, match["status"])
+    _poll_summary(match_id, options, voting, is_admin)
 
-    # ── Result breakdown ─────────────────────────────────────────────────────
-    if match["status"] == "completed":
+    # ── Result (only after poll closes AND result entered) ────────────────────
+    if match["status"] == "completed" and not voting:
         st.markdown("---")
         _result_section(match, options, user["user_id"])
 
 
-def _voting_section(match, options, user, user_tz, voting_open):
+# ── Voting UI ─────────────────────────────────────────────────────────────────
+
+def _voting_section(match, options, user, user_tz):
     existing = get_user_vote(user["user_id"], match["match_id"])
 
     if existing:
@@ -86,9 +97,6 @@ def _voting_section(match, options, user, user_tz, voting_open):
             f"| Changes: {changes}"
         )
 
-    if not voting_open:
-        return
-
     st.subheader("Cast / Update Your Vote")
 
     if len(options) <= 6:
@@ -96,13 +104,15 @@ def _voting_section(match, options, user, user_tz, voting_open):
         for i, opt in enumerate(options):
             selected = existing and existing["vote"] == opt
             label    = f"✅ {opt}" if selected else opt
-            if cols[i].button(label, key=f"v_{opt}",
-                              use_container_width=True,
-                              type="primary" if selected else "secondary"):
+            if cols[i].button(
+                label, key=f"v_{opt}",
+                use_container_width=True,
+                type="primary" if selected else "secondary"
+            ):
                 _submit_vote(user["user_id"], match, opt, existing)
     else:
-        default = options.index(existing["vote"]) \
-                  if existing and existing["vote"] in options else 0
+        default = (options.index(existing["vote"])
+                   if existing and existing["vote"] in options else 0)
         choice  = st.selectbox("Select your pick", options, index=default)
         if st.button("Confirm Vote", type="primary"):
             _submit_vote(user["user_id"], match, choice, existing)
@@ -124,25 +134,35 @@ def _submit_vote(user_id, match, option, existing):
     st.rerun()
 
 
-def _poll_summary(match_id, options, status):
+# ── Poll summary ──────────────────────────────────────────────────────────────
+
+def _poll_summary(match_id, options, voting_open, is_admin):
     votes = get_votes(match_id=match_id)
     total = len(votes)
-    hide  = (status == "upcoming")   # hide exact counts while open
 
-    if total == 0:
-        st.caption("No votes yet.")
+    st.subheader("📊 Poll")
+
+    # Regular users cannot see other votes while voting is open
+    if voting_open and not is_admin:
+        if total > 0:
+            st.caption(f"**{total}** vote(s) cast so far — results hidden until voting closes.")
+        else:
+            st.caption("No votes yet — results shown after voting closes.")
         return
 
-    st.subheader(f"📊 Poll  ({total} votes)")
+    if total == 0:
+        st.caption("No votes cast.")
+        return
+
+    st.caption(f"{total} total votes")
     for opt in options:
         count = sum(1 for v in votes if v["vote"] == opt)
         pct   = round(count / total * 100) if total else 0
         bar   = "█" * (pct // 5) + "░" * (20 - pct // 5)
-        line  = f"{opt:<25} {bar}  {pct}%"
-        if not hide:
-            line += f"  ({count} votes)"
-        st.markdown(f"`{line}`")
+        st.markdown(f"`{opt:<25} {bar}  {pct}%  ({count} votes)`")
 
+
+# ── Result breakdown ──────────────────────────────────────────────────────────
 
 def _result_section(match, options, user_id):
     result   = match.get("result", "")
@@ -153,21 +173,21 @@ def _result_section(match, options, user_id):
 
     st.subheader(f"🏆 Result: {result} Won")
 
-    # Winner points
     winner_pts = 0.0
     for p in pts_list:
-        if p["match_id"] == match["match_id"] and float(p.get("total_points", 0)) > 0:
+        if (p["match_id"] == match["match_id"]
+                and float(p.get("total_points", 0)) > 0):
             winner_pts = float(p["total_points"])
             break
     if winner_pts:
         st.caption(f"Points awarded to correct voters: **+{winner_pts}** each")
 
-    # Per-option voter lists
     for opt in options:
         opt_votes = [v for v in votes if v["vote"] == opt]
         is_win    = opt == result
         icon      = "✅" if is_win else "❌"
-        pts_label = f"  —  +{winner_pts} pts each" if is_win and winner_pts else "  —  0 pts"
+        pts_label = (f"  —  +{winner_pts} pts each"
+                     if is_win and winner_pts else "  —  0 pts")
 
         with st.expander(f"{icon}  **{opt}** voters{pts_label}  ({len(opt_votes)})"):
             if not opt_votes:
@@ -186,10 +206,11 @@ def _result_section(match, options, user_id):
                         f"{'  +' + str(u_pts) + ' pts' if u_pts > 0 else '  0 pts'}"
                     )
 
-    # Missed / penalised
-    missed_pts = [p for p in pts_list
-                  if p["match_id"] == match["match_id"]
-                  and ("miss" in p.get("note","") or "penalty" in p.get("note",""))]
+    missed_pts = [
+        p for p in pts_list
+        if p["match_id"] == match["match_id"]
+        and ("miss" in p.get("note", "") or "penalty" in p.get("note", ""))
+    ]
     if missed_pts:
         with st.expander(f"⚠️  Missed / Penalised  ({len(missed_pts)})"):
             for p in missed_pts:
