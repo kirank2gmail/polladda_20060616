@@ -1,7 +1,7 @@
 """
 app.py — SportsPoll
 No auth version. User picks name from list or creates one.
-Navigation as fixed dropdown selectbox at top in custom HTML frame.
+Navigation as dropdown selectbox.
 """
 
 import streamlit as st
@@ -33,30 +33,7 @@ h1, h2, h3 {
 [data-testid="stSidebar"] {
     display: none !important;
 }
-
-/* Fixed navbar at top */
-.navbar-container {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    background: white;
-    z-index: 9999;
-    padding: 1rem 2rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-    width: 100%;
-    box-sizing: border-box;
-}
-
-/* Add padding to main content to account for fixed navbar */
-[data-testid="stAppViewContainer"] {
-    padding-top: 80px;
-}
 </style>
-
-<div class="navbar-container" id="navbar-placeholder">
-    <!-- Navbar will be rendered here by Streamlit -->
-</div>
 """, unsafe_allow_html=True)
 
 from data.db import get_all_users, create_user
@@ -126,7 +103,7 @@ def render_navbar(user: dict):
         nav_items.append(("⚙️ Admin", "admin"))
 
     # Create columns: nav dropdown + user info + switch button
-    col1, col2, col3 = st.columns([2, 2, 1.5])
+    col1, col2 = st.columns([2, 3])
 
     with col1:
         # Dropdown navigation
@@ -138,8 +115,7 @@ def render_navbar(user: dict):
             "Navigate",
             options=nav_labels,
             index=current_index,
-            key="nav_dropdown",
-            label_visibility="collapsed"
+            key="nav_dropdown"
         )
         
         selected_page = nav_pages[nav_labels.index(selected)]
@@ -148,14 +124,17 @@ def render_navbar(user: dict):
             st.rerun()
 
     with col2:
-        st.caption(f"👤 **{user['name']}**")
+        col_user, col_switch = st.columns([1.5, 1])
+        with col_user:
+            st.caption(f"👤 **{user['name']}**")
+        with col_switch:
+            if st.button("Switch User", use_container_width=True, key="switch_user"):
+                st.session_state["user"]     = None
+                st.session_state["page"]     = "home"
+                st.session_state["match_id"] = None
+                st.rerun()
 
-    with col3:
-        if st.button("Switch User", use_container_width=True, key="switch_user"):
-            st.session_state["user"]     = None
-            st.session_state["page"]     = "home"
-            st.session_state["match_id"] = None
-            st.rerun()
+    st.markdown("---")
 
 
 def route(user: dict):
