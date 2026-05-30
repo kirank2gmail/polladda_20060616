@@ -1,7 +1,7 @@
 """
 app.py — SportsPoll
-Top navbar using Streamlit selectbox (reliable, no JS issues).
-Fixed position via CSS trick. 60% nav + 30% user area.
+Navbar selectbox does NOT override page set by buttons.
+Key fix: only navigate when user explicitly changes the dropdown.
 """
 
 import streamlit as st
@@ -16,38 +16,19 @@ st.set_page_config(
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@300;400;500&display=swap');
-
 html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
 h1, h2, h3 { font-family: 'Syne', sans-serif !important; font-weight: 700 !important; }
-
-/* Hide default streamlit chrome */
 header[data-testid="stHeader"] { display: none !important; }
 #MainMenu { display: none !important; }
 footer    { display: none !important; }
-
-/* Sticky top navbar container */
-.sp-navbar-wrap {
+.block-container { padding-top: 0.5rem !important; max-width: 1100px; }
+div[data-testid="stHorizontalBlock"]:first-of-type {
+    background: #0e1117;
+    border-bottom: 1px solid #2a2d35;
+    padding: 6px 4px;
     position: sticky;
     top: 0;
     z-index: 999;
-    background: #0e1117;
-    border-bottom: 1px solid #2a2d35;
-    padding: 6px 0 6px 0;
-    margin-bottom: 1rem;
-}
-
-/* Make selectbox look like a nav */
-.sp-navbar-wrap div[data-testid="stSelectbox"] select {
-    background: #1e2130 !important;
-    color: #fff !important;
-    border: 1px solid #3a3d4a !important;
-    border-radius: 8px !important;
-    font-size: 0.95rem !important;
-}
-
-.block-container {
-    padding-top: 0.5rem !important;
-    max-width: 1100px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -62,8 +43,9 @@ from utils.timezone import COMMON_TIMEZONES
 import pytz
 
 # ── Session defaults ──────────────────────────────────────────────────────────
-for k, v in [("user", None), ("page", "home"),
-             ("match_id", None), ("tournament_id", None)]:
+for k, v in [("user", None), ("page", "home"), ("page", "home"),
+             ("match_id", None), ("tournament_id", None),
+             ("_last_nav", "home")]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -75,55 +57,69 @@ def render_navbar(user: dict):
     nick     = get_display_name(user["user_id"])
     cur_page = st.session_state.get("page", "home")
 
-    # Build page options
-    page_options = {
-        "🏠  Home"       : "home",
-        "🏅  Leaderboard": "leaderboard",
-        "👤  Profile"    : "profile",
+    # Map page keys to display labels
+    page_map = {
+        "home"       : "🏠  Home",
+        "leaderboard": "🏅  Leaderboard",
+        "profile"    : "👤  Profile",
     }
     if is_admin:
-        page_options["⚙️  Admin"] = "admin"
+        page_map["admin"] = "⚙️  Admin"
 
-    # Find current label
-    cur_label = next(
-        (label for label, p in page_options.items() if p == cur_page),
-        "🏠  Home"
+    labels    = list(page_map.values())
+    keys      = list(page_map.keys())
+
+    # Current label — fall back to Home if page not in map (e.g. "match")
+    cur_label = page_map.get(cur_page, "🏠  Home")
+    cur_idx   = labels.index(cur_label)
+
+    # Render navbar row
+    c_brand, c_nav, c_nick, c_out = st.columns([1, 6, 3, 2])
+
+    c_brand.markdown(
+        "<div style='padding-top:6px;font-weight:800;font-size:1.1rem;'>🏆</div>",
+        unsafe_allow_html=True
     )
 
-    # Render sticky navbar
-    st.markdown('<div class="sp-navbar-wrap">', unsafe_allow_html=True)
-
-    # Columns: brand | nav dropdown (60%) | user + signout (30%)
-    c_brand, c_nav, c_user = st.columns([1, 6, 3])
-
-    with c_brand:
-        st.markdown("### 🏆")
-
     with c_nav:
-        selected_label = st.selectbox(
+        chosen_label = st.selectbox(
             "nav",
-            options=list(page_options.keys()),
-            index=list(page_options.keys()).index(cur_label),
+            options=labels,
+            index=cur_idx,
             label_visibility="collapsed",
             key="navbar_select",
         )
 
-    with c_user:
-        u_col, s_col = st.columns([3, 2])
-        u_col.markdown(f"<div style='padding-top:8px;color:#ccc;font-size:0.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>👤 {nick}</div>",
-                       unsafe_allow_html=True)
-        if s_col.button("Sign Out", use_container_width=True, key="signout_btn"):
-            for k in ("user","page","match_id","tournament_id"):
-                st.session_state[k] = None if k == "user" else "home"
-            st.rerun()
+    c_nick.markdown(
+        f"<div style='padding-top:8px;font-size:0.85rem;"
+        f"color:#ccc;overflow:hidden;text-overflow:ellipsis;"
+        f"white-space:nowrap;'>👤 {nick}</div>",
+        unsafe_allow_html=True
+    )
 
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # Navigate when dropdown changes
-    selected_page = page_options[selected_label]
-    if selected_page != cur_page:
-        st.session_state["page"] = selected_page
+    if c_out.button("Sign Out", use_container_width=True, key="signout_btn"):
+        for k in ("user", "page", "match_id", "tournament_id", "_last_nav"):
+            st.session_state[k] = None if k == "user" else "home"
         st.rerun()
+
+    # ── Only navigate if user actually changed the dropdown ──────────────────
+    chosen_page = keys[labels.index(chosen_label)]
+
+    # _last_nav tracks what the navbar was last set to.
+    # Only act if the dropdown changed FROM the last nav state.
+    # This prevents the navbar from overriding button-triggered navigation.
+    last_nav = st.session_state.get("_last_nav", cur_page)
+
+    if chosen_page != last_nav:
+        # User moved the dropdown — honour it
+        st.session_state["_last_nav"] = chosen_page
+        st.session_state["page"]      = chosen_page
+        st.session_state["match_id"]  = None
+        st.rerun()
+    else:
+        # Keep _last_nav in sync with current page for non-match pages
+        if cur_page in page_map:
+            st.session_state["_last_nav"] = cur_page
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -136,11 +132,11 @@ def show_login():
             "<h1 style='text-align:center;font-size:3rem;'>🏆 SportsPoll</h1>",
             unsafe_allow_html=True)
         st.markdown(
-            "<p style='text-align:center;color:#888;'>Predict · Compete · Win</p>",
+            "<p style='text-align:center;color:#888;'>"
+            "Predict · Compete · Win</p>",
             unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # First run — no admin exists yet
         if not admin_exists():
             st.info("No admin yet. Create the first admin account.")
             with st.form("first_admin"):
@@ -152,7 +148,7 @@ def show_login():
                     if not uname.strip():
                         st.error("Username required.")
                     elif len(pw1) < 6:
-                        st.error("Password must be at least 6 characters.")
+                        st.error("Min 6 characters required.")
                     elif pw1 != pw2:
                         st.error("Passwords do not match.")
                     else:
@@ -163,7 +159,6 @@ def show_login():
                         st.rerun()
             return
 
-        # Normal login
         users = get_all_users()
         names = [u["name"] for u in users]
         if not names:
@@ -177,7 +172,9 @@ def show_login():
                                      use_container_width=True):
                 u = get_user_by_name(username)
                 if u and verify_password(u["user_id"], password):
-                    st.session_state["user"] = u
+                    st.session_state["user"]      = u
+                    st.session_state["page"]      = "home"
+                    st.session_state["_last_nav"] = "home"
                     st.rerun()
                 else:
                     st.error("Incorrect password.")
@@ -196,7 +193,7 @@ def show_change_password(user: dict):
             if st.form_submit_button("Set Password", type="primary",
                                      use_container_width=True):
                 if len(pw1) < 6:
-                    st.error("Password must be at least 6 characters.")
+                    st.error("Min 6 characters required.")
                 elif pw1 != pw2:
                     st.error("Passwords do not match.")
                 else:
@@ -216,7 +213,7 @@ def show_profile(user: dict):
     with st.container(border=True):
         st.subheader("Nickname")
         st.caption(
-            "Shown on leaderboard and results. "
+            "Shown on leaderboard and results instead of your username. "
             f"Current: **{nick}**"
         )
         c1, c2 = st.columns([3, 1])
@@ -250,7 +247,6 @@ def show_profile(user: dict):
 
     with st.container(border=True):
         st.subheader("Timezone")
-        st.caption("Used to show match times in your local time.")
         all_tz  = COMMON_TIMEZONES + [
             t for t in pytz.all_timezones if t not in COMMON_TIMEZONES
         ]
