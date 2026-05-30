@@ -73,7 +73,7 @@ def create_user(name: str, password: str, role: str = "user",
     user = {
         "user_id"             : uid,
         "name"                : name,
-        "nickname"            : uid,          # default = user_id
+        "nickname"            : name,          # default = name
         "role"                : role,
         "password_hash"       : _hash(password),
         "must_change_password": True,
