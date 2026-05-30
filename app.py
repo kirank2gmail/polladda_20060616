@@ -1,7 +1,7 @@
 """
 app.py — SportsPoll
 No auth version. User picks name from list or creates one.
-Navigation as dropdown selectbox.
+Navigation as fixed dropdown selectbox at top.
 """
 
 import streamlit as st
@@ -27,6 +27,21 @@ h1, h2, h3 {
 .block-container {
     padding-top: 1rem;
     max-width: 1100px;
+}
+
+/* Hide sidebar */
+[data-testid="stSidebar"] {
+    display: none;
+}
+
+/* Fixed navbar */
+[data-testid="stVerticalBlockBorderWrapper"]:has(> [data-testid="stHorizontalBlock"]) {
+    position: sticky;
+    top: 0;
+    background: white;
+    z-index: 999;
+    padding: 0.5rem 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 </style>
 """, unsafe_allow_html=True)
