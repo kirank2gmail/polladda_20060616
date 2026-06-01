@@ -1,71 +1,59 @@
 """
-data/db.py — Local file-based data store.
-All data lives in data/store/*.json
-
-User fields:
-  user_id, name, nickname, role, password_hash,
-  must_change_password, timezone, created_at, created_by
+data/db.py — Data access layer.
+Storage backend: Google Cloud Storage (or local JSON fallback for dev).
+All reads/writes go through data/gcs.py.
 """
 
-import json
 import hashlib
 import uuid
 from datetime import datetime
-from pathlib import Path
-
-DATA_DIR = Path(__file__).parent / "store"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+from data.gcs import read_table, write_table
 
 
-# ── Core ──────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _path(t):        return DATA_DIR / f"{t}.json"
 def _now():          return datetime.utcnow().isoformat()
 def _uid():          return str(uuid.uuid4())[:8]
 def _hash(pw: str):  return hashlib.sha256(pw.encode()).hexdigest()
 
-def _read(table: str) -> list[dict]:
-    p = _path(table)
-    if not p.exists(): return []
-    try:
-        with open(p) as f: return json.load(f)
-    except: return []
-
-def _write(table: str, records: list[dict]):
-    with open(_path(table), "w") as f:
-        json.dump(records, f, indent=2, default=str)
-
-def _insert(table: str, rec: dict):
-    rows = _read(table); rows.append(rec); _write(table, rows)
+def _insert(table: str, record: dict):
+    rows = read_table(table)
+    rows.append(record)
+    write_table(table, rows)
 
 def _update_where(table: str, match_fn, update_fn):
-    rows = _read(table)
+    rows = read_table(table)
     for r in rows:
-        if match_fn(r): update_fn(r)
-    _write(table, rows)
+        if match_fn(r):
+            update_fn(r)
+    write_table(table, rows)
 
 def _delete_where(table: str, match_fn):
-    _write(table, [r for r in _read(table) if not match_fn(r)])
+    rows = read_table(table)
+    write_table(table, [r for r in rows if not match_fn(r)])
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
 
 def get_all_users() -> list[dict]:
-    return _read("users")
+    return read_table("users")
 
 def get_user_by_id(user_id: str) -> dict | None:
-    return next((u for u in _read("users") if u["user_id"] == user_id), None)
+    return next((u for u in read_table("users")
+                 if u["user_id"] == user_id), None)
 
 def get_user_by_name(name: str) -> dict | None:
-    return next((u for u in _read("users")
+    return next((u for u in read_table("users")
                  if u["name"].lower() == name.lower()), None)
 
 def get_display_name(user_id: str) -> str:
-    """Return nickname if set and non-empty, else user_id."""
-    u = get_user_by_id(user_id)
+    u    = get_user_by_id(user_id)
     if not u: return user_id
     nick = (u.get("nickname") or "").strip()
     return nick if nick else u["user_id"]
+
+def admin_exists() -> bool:
+    return any(u.get("role") == "admin" for u in read_table("users"))
 
 def create_user(name: str, password: str, role: str = "user",
                 created_by: str = "admin") -> dict:
@@ -73,7 +61,7 @@ def create_user(name: str, password: str, role: str = "user",
     user = {
         "user_id"             : uid,
         "name"                : name,
-        "nickname"            : name,          # default = name
+        "nickname"            : uid,
         "role"                : role,
         "password_hash"       : _hash(password),
         "must_change_password": True,
@@ -84,9 +72,6 @@ def create_user(name: str, password: str, role: str = "user",
     _insert("users", user)
     return user
 
-def admin_exists() -> bool:
-    return any(u.get("role") == "admin" for u in _read("users"))
-
 def verify_password(user_id: str, password: str) -> bool:
     u = get_user_by_id(user_id)
     return bool(u and u.get("password_hash") == _hash(password))
@@ -94,7 +79,7 @@ def verify_password(user_id: str, password: str) -> bool:
 def change_password(user_id: str, new_password: str):
     _update_where("users",
         lambda r: r["user_id"] == user_id,
-        lambda r: r.update({"password_hash": _hash(new_password),
+        lambda r: r.update({"password_hash"       : _hash(new_password),
                              "must_change_password": False}))
 
 def update_nickname(user_id: str, nickname: str):
@@ -119,11 +104,12 @@ def delete_user(user_id: str):
 # ── Tournaments ───────────────────────────────────────────────────────────────
 
 def get_tournaments(status: str = None) -> list[dict]:
-    ts = _read("tournaments")
+    ts = read_table("tournaments")
     return [t for t in ts if t.get("status") == status] if status else ts
 
 def get_tournament(tid: str) -> dict | None:
-    return next((t for t in _read("tournaments") if t["tournament_id"] == tid), None)
+    return next((t for t in read_table("tournaments")
+                 if t["tournament_id"] == tid), None)
 
 def create_tournament(data: dict):
     _insert("tournaments", {
@@ -147,29 +133,34 @@ def update_tournament_status(tid: str, status: str):
 # ── Registrations ─────────────────────────────────────────────────────────────
 
 def get_registrations(tid: str) -> list[dict]:
-    return [r for r in _read("registrations") if r["tournament_id"] == tid]
+    return [r for r in read_table("registrations")
+            if r["tournament_id"] == tid]
 
 def is_registered(user_id: str, tid: str) -> bool:
     return any(r["user_id"] == user_id and r["tournament_id"] == tid
-               for r in _read("registrations"))
+               for r in read_table("registrations"))
 
 def register_user(user_id: str, tid: str):
     if not is_registered(user_id, tid):
         _insert("registrations", {
-            "reg_id": _uid(), "user_id": user_id,
-            "tournament_id": tid, "registered_at": _now()})
+            "reg_id"       : _uid(),
+            "user_id"      : user_id,
+            "tournament_id": tid,
+            "registered_at": _now(),
+        })
 
 
 # ── Matches ───────────────────────────────────────────────────────────────────
 
 def get_matches(tournament_id: str = None, status: str = None) -> list[dict]:
-    ms = _read("matches")
+    ms = read_table("matches")
     if tournament_id: ms = [m for m in ms if m["tournament_id"] == tournament_id]
     if status:        ms = [m for m in ms if m.get("status") == status]
     return ms
 
 def get_match(match_id: str) -> dict | None:
-    return next((m for m in _read("matches") if m["match_id"] == match_id), None)
+    return next((m for m in read_table("matches")
+                 if m["match_id"] == match_id), None)
 
 def create_match(data: dict):
     _insert("matches", {
@@ -200,37 +191,43 @@ def update_match_result(match_id: str, result: str):
 
 def delete_match(match_id: str):
     for table in ("matches", "votes", "points"):
-        _delete_where(table, lambda r: r["match_id"] == match_id)
+        _delete_where(table, lambda r, m=match_id: r["match_id"] == m)
 
 
 # ── Votes ─────────────────────────────────────────────────────────────────────
 
 def get_votes(match_id: str = None, tournament_id: str = None) -> list[dict]:
-    vs = _read("votes")
-    if match_id:       vs = [v for v in vs if v["match_id"] == match_id]
-    if tournament_id:  vs = [v for v in vs if v["tournament_id"] == tournament_id]
+    vs = read_table("votes")
+    if match_id:      vs = [v for v in vs if v["match_id"] == match_id]
+    if tournament_id: vs = [v for v in vs if v["tournament_id"] == tournament_id]
     return vs
 
 def get_user_vote(user_id: str, match_id: str) -> dict | None:
-    return next((v for v in _read("votes")
+    return next((v for v in read_table("votes")
                  if v["user_id"] == user_id and v["match_id"] == match_id), None)
 
 def cast_vote(user_id: str, match_id: str, tid: str, vote: str):
     _insert("votes", {
-        "vote_id": _uid(), "user_id": user_id,
-        "match_id": match_id, "tournament_id": tid,
-        "vote": vote, "voted_at": _now(),
-        "updated_at": "", "update_count": 0})
+        "vote_id"      : _uid(),
+        "user_id"      : user_id,
+        "match_id"     : match_id,
+        "tournament_id": tid,
+        "vote"         : vote,
+        "voted_at"     : _now(),
+        "updated_at"   : "",
+        "update_count" : 0,
+    })
 
 def update_vote(user_id: str, match_id: str, new_vote: str):
     _update_where("votes",
         lambda r: r["user_id"] == user_id and r["match_id"] == match_id,
         lambda r: r.update({
-            "vote": new_vote, "updated_at": _now(),
-            "update_count": int(r.get("update_count", 0)) + 1}))
+            "vote"        : new_vote,
+            "updated_at"  : _now(),
+            "update_count": int(r.get("update_count", 0)) + 1,
+        }))
 
 def delete_vote(user_id: str, match_id: str):
-    """Admin-only: delete a specific user's vote."""
     _delete_where("votes",
         lambda r: r["user_id"] == user_id and r["match_id"] == match_id)
 
@@ -238,14 +235,14 @@ def delete_vote(user_id: str, match_id: str):
 # ── Points ────────────────────────────────────────────────────────────────────
 
 def get_points(tournament_id: str = None, user_id: str = None) -> list[dict]:
-    ps = _read("points")
+    ps = read_table("points")
     if tournament_id: ps = [p for p in ps if p["tournament_id"] == tournament_id]
     if user_id:       ps = [p for p in ps if p["user_id"] == user_id]
     return ps
 
 def save_points_batch(records: list[dict]):
-    existing = _read("points")
-    now = _now()
+    existing = read_table("points")
+    now      = _now()
     for r in records:
         existing.append({
             "point_id"      : _uid(),
@@ -259,7 +256,7 @@ def save_points_batch(records: list[dict]):
             "note"          : r.get("note",           ""),
             "calculated_at" : now,
         })
-    _write("points", existing)
+    write_table("points", existing)
 
 def delete_match_points(match_id: str):
     _delete_where("points", lambda r: r["match_id"] == match_id)
