@@ -1,4 +1,6 @@
-streamlit>=1.32.0
-pandas>=2.0.0
-pytz>=2024.1
-python-dateutil>=2.9.0
+streamlit
+pandas
+pytz
+python-dateutil
+google-cloud-storage
+google-auth
