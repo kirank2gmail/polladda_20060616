@@ -1,24 +1,18 @@
 """
 data/gcs.py
-Google Cloud Storage backend with 1-minute cache.
+Google Cloud Storage backend with 5-minute cache.
 
-read_table()  — cached for 60s (1 min). GCS hit only once per 1 min per table.
-write_table() — writes to GCS immediately, then clears cache so next
-                read picks up fresh data straight away.
+read_table()  — cached for 300s (5 min).
+write_table() — writes to GCS, then clears cache.
 
-Falls back to local data/store/*.json if GCS is not configured,
-so local dev works without any credentials.
+Local fallback only used if GCS is not configured (local dev).
 """
 
 import json
 import streamlit as st
 from pathlib import Path
 
-# ── Local fallback ────────────────────────────────────────────────────────────
-_LOCAL_DIR = Path(__file__).parent / "store"
-_LOCAL_DIR.mkdir(parents=True, exist_ok=True)a
-
-CACHE_TTL = 60   # 1 minutes
+CACHE_TTL = 300   # 5 minutes
 
 
 # ── GCS helpers ───────────────────────────────────────────────────────────────
@@ -52,8 +46,8 @@ def _blob_name(table: str) -> str:
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def read_table(table: str) -> list[dict]:
     """
-    Read a JSON table. Result cached for 5 minutes.
-    Cache is invalidated immediately after any write to the same table.
+    Read a JSON table. Cached for 5 minutes.
+    Cache cleared immediately after any write.
     """
     if _gcs_configured():
         try:
@@ -66,7 +60,9 @@ def read_table(table: str) -> list[dict]:
             st.warning(f"GCS read error ({table}): {e}")
             return []
     else:
-        p = _LOCAL_DIR / f"{table}.json"
+        # Local fallback for dev — only runs if GCS not configured
+        local_dir = Path(__file__).parent / "store"
+        p = local_dir / f"{table}.json"
         if not p.exists():
             return []
         try:
@@ -81,8 +77,7 @@ def read_table(table: str) -> list[dict]:
 def write_table(table: str, records: list[dict]):
     """
     Write a JSON table to GCS (or local fallback).
-    Immediately clears the cache for this table so the
-    next read fetches fresh data instead of the stale cached version.
+    Clears cache after write so next read is fresh.
     """
     data = json.dumps(records, indent=2, default=str)
 
@@ -95,9 +90,11 @@ def write_table(table: str, records: list[dict]):
             st.error(f"GCS write error ({table}): {e}")
             return
     else:
-        p = _LOCAL_DIR / f"{table}.json"
-        with open(p, "w") as f:
+        # Local fallback for dev
+        local_dir = Path(__file__).parent / "store"
+        local_dir.mkdir(parents=True, exist_ok=True)
+        with open(local_dir / f"{table}.json", "w") as f:
             f.write(data)
 
-    # Invalidate cache for this table so next read is fresh
+    # Invalidate cache so next read is fresh
     read_table.clear()
