@@ -1,18 +1,13 @@
 """
 pages/match.py
 Match detail — voting, poll, result breakdown.
-
-Rules:
-  - Poll count/names hidden from regular users while voting open
-  - Admin sees full voter list + can delete any vote while poll open
-  - Result section only shown after poll closes AND result entered
+Navigation: Back (to home keeping tournament), Previous, Next match.
 """
 
 import streamlit as st
 from data.db import (
-    get_match, get_user_vote, cast_vote, update_vote,
-    get_votes, delete_vote, get_points, get_all_users,
-    is_registered, get_display_name
+    get_match, get_matches, get_user_vote, cast_vote, update_vote,
+    get_votes, delete_vote, get_points, get_all_users, get_display_name
 )
 from utils.timezone import (
     is_voting_open, format_match_times, format_countdown, format_ts
@@ -20,7 +15,7 @@ from utils.timezone import (
 
 
 def show_match(user: dict, match_id: str):
-    match    = get_match(match_id)
+    match = get_match(match_id)
     if not match:
         st.error(f"Match not found: {match_id}")
         return
@@ -32,12 +27,10 @@ def show_match(user: dict, match_id: str):
     msg, sev = format_countdown(match)
     voting   = is_voting_open(match)
 
-    # ── Back ─────────────────────────────────────────────────────────────────
-    if st.button("← Back"):
-        st.session_state["page"] = "home"
-        st.rerun()
+    # ── Navigation bar ────────────────────────────────────────────────────────
+    _nav_bar(match_id, match["tournament_id"])
 
-    # ── Header ───────────────────────────────────────────────────────────────
+    # ── Header ────────────────────────────────────────────────────────────────
     st.title(match["title"])
     st.caption(f"{match['tournament_id']}  ·  {match_id}")
 
@@ -52,7 +45,6 @@ def show_match(user: dict, match_id: str):
     else:
         st.caption(f"UTC: {times['utc']}")
 
-    # ── Status banner ─────────────────────────────────────────────────────────
     if sev == "error":   st.error(msg)
     elif sev == "warning": st.warning(msg)
     else:                st.success(msg)
@@ -61,24 +53,76 @@ def show_match(user: dict, match_id: str):
 
     # ── Voting ────────────────────────────────────────────────────────────────
     if voting:
-        if not is_registered(user["user_id"], match["tournament_id"]):
-            st.warning("Register for this tournament to vote.")
-        else:
-            _voting_section(match, options, user, user_tz)
+        _voting_section(match, options, user, user_tz)
     elif match["status"] == "upcoming":
         st.info("⏸️ Voting closed — result pending from admin.")
 
-    # ── Poll summary ──────────────────────────────────────────────────────────
+    # ── Poll ──────────────────────────────────────────────────────────────────
     st.markdown("---")
     _poll_summary(match, options, voting, is_admin)
 
-    # ── Result (only after poll closes AND result entered) ────────────────────
+    # ── Result ────────────────────────────────────────────────────────────────
     if match["status"] == "completed" and not voting:
         st.markdown("---")
         _result_section(match, options, user["user_id"])
 
 
-# ── Voting UI ─────────────────────────────────────────────────────────────────
+# ── Navigation ────────────────────────────────────────────────────────────────
+
+def _nav_bar(match_id: str, tournament_id: str):
+    """Back / Previous / Next navigation."""
+    # Match list from session (set by home.py)
+    match_list = st.session_state.get("match_list", [])
+
+    # If no list in session, build it from tournament
+    if not match_list:
+        all_ms     = get_matches(tournament_id=tournament_id)
+        match_list = [m["match_id"] for m in all_ms]
+        st.session_state["match_list"] = match_list
+
+    cur_idx  = match_list.index(match_id) if match_id in match_list else -1
+    has_prev = cur_idx > 0
+    has_next = cur_idx >= 0 and cur_idx < len(match_list) - 1
+
+    c_back, c_prev, c_next = st.columns([2, 1, 1])
+
+    with c_back:
+        if st.button("← Back to Matches", use_container_width=True):
+            # Return to home keeping same tournament
+            st.session_state["page"]     = "home"
+            st.session_state["_last_nav"] = "home"
+            # Keep home_tournament_id so tournament stays selected
+            if "match_tournament_id" in st.session_state:
+                st.session_state["home_tournament_id"] = \
+                    st.session_state["match_tournament_id"]
+            st.rerun()
+
+    with c_prev:
+        if has_prev:
+            prev_id = match_list[cur_idx - 1]
+            prev_m  = get_match(prev_id)
+            label   = f"◀ {prev_m['title']}" if prev_m else "◀ Previous"
+            if st.button(label, use_container_width=True, key="nav_prev"):
+                st.session_state["match_id"] = prev_id
+                st.rerun()
+        else:
+            st.button("◀ Previous", use_container_width=True,
+                      disabled=True, key="nav_prev_dis")
+
+    with c_next:
+        if has_next:
+            next_id = match_list[cur_idx + 1]
+            next_m  = get_match(next_id)
+            label   = f"{next_m['title']} ▶" if next_m else "Next ▶"
+            if st.button(label, use_container_width=True, key="nav_next"):
+                st.session_state["match_id"] = next_id
+                st.rerun()
+        else:
+            st.button("Next ▶", use_container_width=True,
+                      disabled=True, key="nav_next_dis")
+
+
+# ── Voting ────────────────────────────────────────────────────────────────────
 
 def _voting_section(match, options, user, user_tz):
     existing = get_user_vote(user["user_id"], match["match_id"])
@@ -100,10 +144,11 @@ def _voting_section(match, options, user, user_tz):
         cols = st.columns(len(options))
         for i, opt in enumerate(options):
             selected = existing and existing["vote"] == opt
-            label    = f"✅ {opt}" if selected else opt
-            if cols[i].button(label, key=f"v_{opt}",
-                              use_container_width=True,
-                              type="primary" if selected else "secondary"):
+            if cols[i].button(
+                f"✅ {opt}" if selected else opt,
+                key=f"v_{opt}", use_container_width=True,
+                type="primary" if selected else "secondary"
+            ):
                 _submit_vote(user["user_id"], match, opt, existing)
     else:
         default = (options.index(existing["vote"])
@@ -134,20 +179,15 @@ def _submit_vote(user_id, match, option, existing):
 def _poll_summary(match, options, voting_open, is_admin):
     votes     = get_votes(match_id=match["match_id"])
     total     = len(votes)
-    poll_mode = match.get("poll_mode", "closed")   # open | closed
+    poll_mode = match.get("poll_mode", "closed")
 
     st.subheader("📊 Poll")
 
-    # Visibility rules:
-    #   closed poll + voting open + not admin → hide everything
-    #   open poll → always show full breakdown (admin and users)
-    #   admin → always see everything regardless of mode
-    hide_from_user = voting_open and not is_admin and poll_mode == "closed"
-
-    if hide_from_user:
+    hide = voting_open and not is_admin and poll_mode == "closed"
+    if hide:
         st.caption(
-            f"**{total}** vote(s) cast so far — "
-            "individual votes and counts shown after voting closes."
+            f"**{total}** vote(s) cast — "
+            "results visible after voting closes."
         )
         return
 
@@ -155,12 +195,10 @@ def _poll_summary(match, options, voting_open, is_admin):
         st.caption("No votes cast yet.")
         return
 
-    # Breakdown visible to admin (always) and everyone after poll closes
     all_users = get_all_users()
     umap      = {u["user_id"]: get_display_name(u["user_id"]) for u in all_users}
 
     st.caption(f"{total} total votes")
-
     for opt in options:
         opt_votes = [v for v in votes if v["vote"] == opt]
         count     = len(opt_votes)
@@ -168,14 +206,13 @@ def _poll_summary(match, options, voting_open, is_admin):
         bar       = "█" * (pct // 5) + "░" * (20 - pct // 5)
         st.markdown(f"`{opt:<22} {bar}  {pct}%  ({count} votes)`")
 
-        # Admin-only voter list with delete button (while poll open OR closed)
         if is_admin and opt_votes:
-            with st.expander(f"Voters for {opt} — admin view"):
+            with st.expander(f"Voters for {opt} — admin"):
                 for v in opt_votes:
                     dname = umap.get(v["user_id"], v["user_id"])
                     c1, c2, c3 = st.columns([3, 3, 1])
                     c1.markdown(f"👤 **{dname}**")
-                    c2.caption(f"voted {v.get('voted_at', '')[:16]}")
+                    c2.caption(f"voted {v.get('voted_at','')[:16]}")
                     if c3.button("🗑️", key=f"dv_{v['vote_id']}",
                                   help=f"Delete {dname}'s vote"):
                         delete_vote(v["user_id"], match["match_id"])
@@ -194,12 +231,11 @@ def _result_section(match, options, user_id):
 
     st.subheader(f"🏆 Result: {result} Won")
 
-    winner_pts = 0.0
-    for p in pts_list:
-        if (p["match_id"] == match["match_id"]
-                and float(p.get("total_points", 0)) > 0):
-            winner_pts = float(p["total_points"])
-            break
+    winner_pts = next(
+        (float(p["total_points"]) for p in pts_list
+         if p["match_id"] == match["match_id"]
+         and float(p.get("total_points", 0)) > 0), 0.0
+    )
     if winner_pts:
         st.caption(f"Points awarded to correct voters: **+{winner_pts}** each")
 
@@ -207,10 +243,8 @@ def _result_section(match, options, user_id):
         opt_votes = [v for v in votes if v["vote"] == opt]
         is_win    = opt == result
         icon      = "✅" if is_win else "❌"
-        if is_win:
-            pts_label = f"  —  +{winner_pts} pts each" if winner_pts else "  —  +? pts"
-        else:
-            pts_label = "  —  −1 pt each"
+        pts_label = (f"  —  +{winner_pts} pts each"
+                     if is_win and winner_pts else "  —  −1 pt each")
 
         with st.expander(f"{icon}  **{opt}** voters{pts_label}  ({len(opt_votes)})"):
             if not opt_votes:
@@ -223,16 +257,17 @@ def _result_section(match, options, user_id):
                          if p["user_id"] == v["user_id"]
                          and p["match_id"] == match["match_id"]), 0.0
                     )
+                    pts_str = f"+{u_pts}" if u_pts > 0 else str(u_pts)
                     st.markdown(
                         f"👤 **{name}**   "
-                        f"voted {v.get('voted_at', '')[:16]}   "
-                        + (f"  +{u_pts} pts" if u_pts > 0 else (f"  {u_pts} pts" if u_pts < 0 else "  0 pts"))
+                        f"voted {v.get('voted_at','')[:16]}   "
+                        f"  {pts_str} pts"
                     )
 
     missed_pts = [
         p for p in pts_list
         if p["match_id"] == match["match_id"]
-        and ("miss" in p.get("note", "") or "penalty" in p.get("note", ""))
+        and ("miss" in p.get("note","") or "penalty" in p.get("note",""))
     ]
     if missed_pts:
         with st.expander(f"⚠️  Missed / Penalised  ({len(missed_pts)})"):
