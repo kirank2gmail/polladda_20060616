@@ -1,7 +1,6 @@
 """
 app.py — SportsPoll
-Navbar selectbox does NOT override page set by buttons.
-Key fix: only navigate when user explicitly changes the dropdown.
+Fixed top navbar (selectbox). Password login with plain text username input.
 """
 
 import streamlit as st
@@ -22,14 +21,6 @@ header[data-testid="stHeader"] { display: none !important; }
 #MainMenu { display: none !important; }
 footer    { display: none !important; }
 .block-container { padding-top: 0.5rem !important; max-width: 1100px; }
-div[data-testid="stHorizontalBlock"]:first-of-type {
-    background: #0e1117;
-    border-bottom: 1px solid #2a2d35;
-    padding: 6px 4px;
-    position: sticky;
-    top: 0;
-    z-index: 999;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -42,8 +33,7 @@ from data.db import (
 from utils.timezone import COMMON_TIMEZONES
 import pytz
 
-# ── Session defaults ──────────────────────────────────────────────────────────
-for k, v in [("user", None), ("page", "home"), ("page", "home"),
+for k, v in [("user", None), ("page", "home"),
              ("match_id", None), ("tournament_id", None),
              ("_last_nav", "home")]:
     if k not in st.session_state:
@@ -57,7 +47,6 @@ def render_navbar(user: dict):
     nick     = get_display_name(user["user_id"])
     cur_page = st.session_state.get("page", "home")
 
-    # Map page keys to display labels
     page_map = {
         "home"       : "🏠  Home",
         "leaderboard": "🏅  Leaderboard",
@@ -66,58 +55,42 @@ def render_navbar(user: dict):
     if is_admin:
         page_map["admin"] = "⚙️  Admin"
 
-    labels    = list(page_map.values())
-    keys      = list(page_map.keys())
-
-    # Current label — fall back to Home if page not in map (e.g. "match")
+    labels   = list(page_map.values())
+    keys     = list(page_map.keys())
     cur_label = page_map.get(cur_page, "🏠  Home")
     cur_idx   = labels.index(cur_label)
 
-    # Render navbar row
     c_brand, c_nav, c_nick, c_out = st.columns([1, 6, 3, 2])
-
     c_brand.markdown(
         "<div style='padding-top:6px;font-weight:800;font-size:1.1rem;'>🏆</div>",
-        unsafe_allow_html=True
-    )
+        unsafe_allow_html=True)
 
     with c_nav:
         chosen_label = st.selectbox(
-            "nav",
-            options=labels,
-            index=cur_idx,
-            label_visibility="collapsed",
-            key="navbar_select",
-        )
+            "nav", options=labels, index=cur_idx,
+            label_visibility="collapsed", key="navbar_select")
 
     c_nick.markdown(
-        f"<div style='padding-top:8px;font-size:0.85rem;"
-        f"color:#ccc;overflow:hidden;text-overflow:ellipsis;"
-        f"white-space:nowrap;'>👤 {nick}</div>",
-        unsafe_allow_html=True
-    )
+        f"<div style='padding-top:8px;font-size:0.85rem;color:#ccc;"
+        f"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>"
+        f"👤 {nick}</div>", unsafe_allow_html=True)
 
     if c_out.button("Sign Out", use_container_width=True, key="signout_btn"):
-        for k in ("user", "page", "match_id", "tournament_id", "_last_nav"):
+        for k in ("user","page","match_id","tournament_id","_last_nav"):
             st.session_state[k] = None if k == "user" else "home"
         st.rerun()
 
-    # ── Only navigate if user actually changed the dropdown ──────────────────
-    chosen_page = keys[labels.index(chosen_label)]
+    st.markdown("---")
 
-    # _last_nav tracks what the navbar was last set to.
-    # Only act if the dropdown changed FROM the last nav state.
-    # This prevents the navbar from overriding button-triggered navigation.
-    last_nav = st.session_state.get("_last_nav", cur_page)
+    chosen_page = keys[labels.index(chosen_label)]
+    last_nav    = st.session_state.get("_last_nav", cur_page)
 
     if chosen_page != last_nav:
-        # User moved the dropdown — honour it
         st.session_state["_last_nav"] = chosen_page
         st.session_state["page"]      = chosen_page
         st.session_state["match_id"]  = None
         st.rerun()
     else:
-        # Keep _last_nav in sync with current page for non-match pages
         if cur_page in page_map:
             st.session_state["_last_nav"] = cur_page
 
@@ -133,10 +106,10 @@ def show_login():
             unsafe_allow_html=True)
         st.markdown(
             "<p style='text-align:center;color:#888;'>"
-            "Predict · Compete · Win</p>",
-            unsafe_allow_html=True)
+            "Predict · Compete · Win</p>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
+        # First run — create first admin
         if not admin_exists():
             st.info("No admin yet. Create the first admin account.")
             with st.form("first_admin"):
@@ -159,25 +132,26 @@ def show_login():
                         st.rerun()
             return
 
-        users = get_all_users()
-        names = [u["name"] for u in users]
-        if not names:
-            st.warning("No users exist. Contact admin.")
-            return
-
+        # Normal login — plain text field, NOT a dropdown
         with st.form("login"):
-            username = st.selectbox("Username", names)
+            username = st.text_input(
+                "Username",
+                placeholder="Enter your username",
+            )
             password = st.text_input("Password", type="password")
             if st.form_submit_button("Sign In", type="primary",
                                      use_container_width=True):
-                u = get_user_by_name(username)
-                if u and verify_password(u["user_id"], password):
-                    st.session_state["user"]      = u
-                    st.session_state["page"]      = "home"
-                    st.session_state["_last_nav"] = "home"
-                    st.rerun()
+                if not username.strip():
+                    st.error("Please enter your username.")
                 else:
-                    st.error("Incorrect password.")
+                    u = get_user_by_name(username.strip())
+                    if u and verify_password(u["user_id"], password):
+                        st.session_state["user"]      = u
+                        st.session_state["page"]      = "home"
+                        st.session_state["_last_nav"] = "home"
+                        st.rerun()
+                    else:
+                        st.error("Username or password is incorrect.")
 
 
 # ── Force password change ─────────────────────────────────────────────────────
@@ -212,10 +186,7 @@ def show_profile(user: dict):
 
     with st.container(border=True):
         st.subheader("Nickname")
-        st.caption(
-            "Shown on leaderboard and results instead of your username. "
-            f"Current: **{nick}**"
-        )
+        st.caption(f"Shown on leaderboard and results. Current: **{nick}**")
         c1, c2 = st.columns([3, 1])
         new_nick = c1.text_input("Nickname", value=nick,
                                   label_visibility="collapsed")
@@ -266,30 +237,24 @@ def route(user: dict):
     if page == "home":
         from pages.home import show_home
         show_home(user)
-
     elif page == "match":
         mid = st.session_state.get("match_id")
         if mid:
             from pages.match import show_match
             show_match(user, mid)
         else:
-            st.session_state["page"] = "home"
-            st.rerun()
-
+            st.session_state["page"] = "home"; st.rerun()
     elif page == "leaderboard":
         from pages.leaderboard import show_leaderboard
         show_leaderboard(user)
-
     elif page == "profile":
         show_profile(user)
-
     elif page == "admin":
         if user.get("role") != "admin":
             st.error("Admin access only.")
         else:
             from admin.dashboard import show_admin
             show_admin(user)
-
     else:
         from pages.home import show_home
         show_home(user)
