@@ -133,20 +133,20 @@ def leaderboard_heroes(rows: list[dict]) -> dict:
     if not rows:
         return {}
 
-    top_win  = max(rows, key=lambda r: r["curr_win_streak"])
-    top_loss = max(rows, key=lambda r: r["max_loss_streak"])  # max ever, not current
+    top_win  = max(rows, key=lambda r: r["max_win_streak"])   # max ever consecutive wins
+    top_loss = max(rows, key=lambda r: r["max_loss_streak"])  # max ever consecutive losses
     top_miss = max(rows, key=lambda r: r["missed"])
 
     return {
         "top_win_streak" : {
             "name" : top_win["name"],
-            "value": top_win["curr_win_streak"],
-            "label": "Current win streak",
+            "value": top_win["max_win_streak"],
+            "label": "Most consecutive wins (ever, misses ignored)",
         },
         "top_loss_streak": {
             "name" : top_loss["name"],
             "value": top_loss["max_loss_streak"],
-            "label": "Most consecutive losses (ever)",
+            "label": "Most consecutive losses (ever, misses ignored)",
         },
         "top_missed"     : {
             "name" : top_miss["name"],
