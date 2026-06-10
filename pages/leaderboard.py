@@ -122,7 +122,9 @@ def _fmt_cell(val) -> str:
         return f"❌ {val}"
     try:
         f = float(val)
-        return f"✅ +{f}" if f > 0 else "❌ 0"
+        if f > 0:   return f"✅ +{f}"
+        if f < 0:   return f"❌ {f}"
+        return "❌ 0"
     except Exception:
         return str(val)
 
