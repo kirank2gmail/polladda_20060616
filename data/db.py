@@ -233,6 +233,9 @@ def get_user_vote(user_id: str, match_id: str) -> dict | None:
 
 def cast_vote(user_id: str, match_id: str, tid: str, vote: str):
     ensure_registered(user_id, tid)   # auto-register on first vote
+    # Remove any existing vote first to prevent duplicates
+    _delete_where("votes",
+        lambda r: r["user_id"] == user_id and r["match_id"] == match_id)
     _insert("votes", {
         "vote_id"      : _uid(), "user_id": user_id,
         "match_id"     : match_id, "tournament_id": tid,
@@ -240,10 +243,20 @@ def cast_vote(user_id: str, match_id: str, tid: str, vote: str):
         "updated_at"   : "", "update_count": 0})
 
 def update_vote(user_id: str, match_id: str, new_vote: str):
-    _update_where("votes",
-        lambda r: r["user_id"] == user_id and r["match_id"] == match_id,
-        lambda r: r.update({"vote": new_vote, "updated_at": _now(),
-                             "update_count": int(r.get("update_count", 0)) + 1}))
+    # Read current vote to get update_count before deleting
+    existing = get_user_vote(user_id, match_id)
+    cur_count = int((existing or {}).get("update_count", 0))
+    voted_at  = (existing or {}).get("voted_at", _now())
+    # Remove all existing votes for this user+match (cleans duplicates too)
+    _delete_where("votes",
+        lambda r: r["user_id"] == user_id and r["match_id"] == match_id)
+    # Re-insert as single clean record
+    tid = (existing or {}).get("tournament_id", "")
+    _insert("votes", {
+        "vote_id"      : _uid(), "user_id": user_id,
+        "match_id"     : match_id, "tournament_id": tid,
+        "vote"         : new_vote, "voted_at": voted_at,
+        "updated_at"   : _now(), "update_count": cur_count + 1})
 
 def delete_vote(user_id: str, match_id: str):
     _delete_where("votes",
