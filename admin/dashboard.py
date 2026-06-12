@@ -17,6 +17,9 @@ from data.db import (
     get_votes, delete_vote, get_user_by_id, verify_password
 )
 from data.points import run_points_calculation
+from utils.email_sender import (
+    send_poll_results, send_leaderboard, email_configured
+)
 from utils.timezone import COMMON_TIMEZONES, get_match_cutoff_utc, is_voting_open
 
 
@@ -520,6 +523,10 @@ def _results_tab():
                         records = run_points_calculation(m["match_id"], sel_tid, winner)
                     correct = sum(1 for r in records if r.get("total_points",0) > 0)
                     st.success(f"**{winner}** won — {correct} correct voter(s) awarded points")
+
+                    # Send emails if configured
+                    if email_configured():
+                        _send_result_emails(m, winner, sel_tid, records)
                     st.rerun()
 
     if done:
@@ -538,6 +545,77 @@ def _results_tab():
                               type="primary", disabled=(new_w == m["result"])):
                     with st.spinner("Recalculating..."):
                         update_match_result(m["match_id"], new_w)
-                        run_points_calculation(m["match_id"], sel_tid, new_w)
+                        records = run_points_calculation(m["match_id"], sel_tid, new_w)
                     st.success(f"Updated to **{new_w}** — points recalculated.")
+                    if email_configured():
+                        _send_result_emails(m, new_w, sel_tid, records)
                     st.rerun()
+
+
+# ── Email helper ──────────────────────────────────────────────────────────────
+
+def _send_result_emails(match: dict, result: str,
+                        tournament_id: str, point_records: list[dict]):
+    """
+    Build and send both emails after result is saved:
+      1. Poll results (votes + calculated win amounts)
+      2. Leaderboard (full lb + last 5 match columns)
+    Errors shown as warnings — never block the UI.
+    """
+    try:
+        from data.db import (
+            get_votes, get_all_users, get_display_name,
+            get_matches, get_points, get_tournament
+        )
+        from utils.streaks import build_leaderboard
+
+        tournament    = get_tournament(tournament_id) or {}
+        t_name        = tournament.get("name", tournament_id)
+        options       = [o.strip() for o in match["options"].split("|") if o.strip()]
+        votes         = get_votes(match_id=match["match_id"])
+        all_users     = get_all_users()
+        display_names = {u["user_id"]: get_display_name(u["user_id"])
+                         for u in all_users}
+
+        # ── Win amounts per option ────────────────────────────────────────────
+        # From point_records: find what winners got
+        winner_pts = next(
+            (float(r["total_points"]) for r in point_records
+             if r.get("total_points", 0) > 0), 0.0
+        )
+        win_amounts = {}
+        for opt in options:
+            if opt == result:
+                win_amounts[opt] = f"+{winner_pts:.2f} pts"
+            else:
+                win_amounts[opt] = "−1 pt"
+
+        # ── Email 1: poll results ─────────────────────────────────────────────
+        try:
+            send_poll_results(match, votes, win_amounts, display_names, t_name)
+            st.toast("📧 Poll results email sent!", icon="✅")
+        except Exception as e:
+            st.warning(f"Poll results email failed: {e}")
+
+        # ── Build leaderboard data ────────────────────────────────────────────
+        all_points    = get_points(tournament_id=tournament_id)
+        all_matches   = get_matches(tournament_id=tournament_id, status="completed")
+        lb_rows       = build_leaderboard(all_points, all_matches, all_users)
+
+        # Last 5 completed matches by date
+        sorted_matches = sorted(all_matches,
+                                key=lambda m: m["match_date"] + m["start_time"])
+        last5          = sorted_matches[-5:]
+        last5_ids      = [m["match_id"] for m in last5]
+        last5_titles   = {m["match_id"]: m["title"][:10] for m in last5}
+
+        # ── Email 2: leaderboard ──────────────────────────────────────────────
+        try:
+            send_leaderboard(match, result, lb_rows,
+                             last5_ids, last5_titles, t_name)
+            st.toast("📧 Leaderboard email sent!", icon="✅")
+        except Exception as e:
+            st.warning(f"Leaderboard email failed: {e}")
+
+    except Exception as e:
+        st.warning(f"Email preparation failed: {e}")
