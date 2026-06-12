@@ -4,4 +4,3 @@ pytz
 python-dateutil
 google-cloud-storage
 google-auth
-Pillow
