@@ -499,58 +499,82 @@ def _results_tab():
     still_open = [m for m in all_ms if m["status"] != "completed" and is_voting_open(m)]
     done       = [m for m in all_ms if m["status"] == "completed"]
 
-    if still_open:
-        st.info(f"**{len(still_open)}** match(es) still have voting open.")
-        for m in still_open:
-            st.caption(f"⏳ `{m['match_id']}` — {m['title']} — "
-                       f"closes {m['start_time']} {m['timezone'].split('/')[-1]}")
+    FRAME_H = 400   # scrollable frame height
 
-    st.subheader("Awaiting Result Entry")
+    # ── 1. Awaiting Result Entry ───────────────────────────────────────────────
+    st.subheader("🎯 Awaiting Result Entry")
+    st.caption("Poll closed — enter the winner to calculate points.")
     if not pending:
         st.caption("No matches awaiting result.")
     else:
-        for m in pending:
-            opts = [o.strip() for o in m["options"].split("|") if o.strip()]
-            scoring = m.get("scoring_mode","ratio")
-            with st.container(border=True):
-                c1, c2, c3 = st.columns([3, 2, 2])
-                c1.markdown(f"**{m['title']}**")
-                c1.caption(f"`{m['match_id']}`  ·  {m['match_date']}  ·  Scoring: **{scoring}**")
-                winner = c2.selectbox("Winner", opts, key=f"r_{m['match_id']}")
-                if c3.button("Save Result", key=f"rb_{m['match_id']}", type="primary"):
-                    with st.spinner("Calculating points..."):
-                        update_match_result(m["match_id"], winner)
-                        records = run_points_calculation(m["match_id"], sel_tid, winner)
-                    correct = sum(1 for r in records if r.get("total_points",0) > 0)
-                    st.success(f"**{winner}** won — {correct} correct voter(s) awarded points")
+        with st.container(border=True, height=FRAME_H):
+            for m in pending:
+                opts    = [o.strip() for o in m["options"].split("|") if o.strip()]
+                scoring = m.get("scoring_mode", "ratio")
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns([3, 2, 2])
+                    c1.markdown(f"**{m['title']}**")
+                    c1.caption(f"`{m['match_id']}`  ·  {m['match_date']} {m['start_time']}  ·  Scoring: **{scoring}**")
+                    winner = c2.selectbox("Winner", opts, key=f"r_{m['match_id']}")
+                    if c3.button("Save Result", key=f"rb_{m['match_id']}", type="primary"):
+                        with st.spinner("Calculating points..."):
+                            update_match_result(m["match_id"], winner)
+                            records = run_points_calculation(m["match_id"], sel_tid, winner)
+                        correct = sum(1 for r in records if r.get("total_points", 0) > 0)
+                        st.success(f"**{winner}** won — {correct} correct voter(s)")
+                        if email_configured():
+                            _send_result_emails(m, winner, sel_tid, records)
+                        st.rerun()
 
-                    # Send emails if configured
-                    if email_configured():
-                        _send_result_emails(m, winner, sel_tid, records)
-                    st.rerun()
+    st.markdown("")
 
-    if done:
-        st.markdown("---")
-        st.subheader("Update / Correct Result")
-        for m in done:
-            opts    = [o.strip() for o in m["options"].split("|") if o.strip()]
-            cur_idx = opts.index(m["result"]) if m["result"] in opts else 0
-            with st.container(border=True):
-                c1, c2, c3 = st.columns([3, 2, 2])
-                c1.markdown(f"**{m['title']}**")
-                c1.caption(f"`{m['match_id']}`  ·  Result: **{m['result']}**")
-                new_w = c2.selectbox("Change to", opts, index=cur_idx,
-                                      key=f"corr_{m['match_id']}")
-                if c3.button("Update Result", key=f"corrb_{m['match_id']}",
-                              type="primary", disabled=(new_w == m["result"])):
-                    with st.spinner("Recalculating..."):
-                        update_match_result(m["match_id"], new_w)
-                        records = run_points_calculation(m["match_id"], sel_tid, new_w)
-                    st.success(f"Updated to **{new_w}** — points recalculated.")
-                    if email_configured():
-                        _send_result_emails(m, new_w, sel_tid, records)
-                    st.rerun()
+    # ── 2. Voting Still Open ──────────────────────────────────────────────────
+    st.subheader("⏳ Voting Still Open")
+    st.caption("Results cannot be entered until voting closes.")
+    if not still_open:
+        st.caption("No matches with open voting.")
+    else:
+        with st.container(border=True, height=FRAME_H):
+            for m in still_open:
+                scoring = m.get("scoring_mode", "ratio")
+                votes   = get_votes(match_id=m["match_id"])
+                with st.container(border=True):
+                    c1, c2 = st.columns([4, 2])
+                    c1.markdown(f"**{m['title']}**")
+                    c1.caption(
+                        f"`{m['match_id']}`  ·  "
+                        f"Closes: {m['start_time']} {m['timezone'].split('/')[-1]}  ·  "
+                        f"Scoring: **{scoring}**"
+                    )
+                    c2.metric("Votes cast", len(votes))
 
+    st.markdown("")
+
+    # ── 3. Update / Correct Result ────────────────────────────────────────────
+    st.subheader("✏️ Update / Correct Result")
+    st.caption("Change result to recalculate all points.")
+    if not done:
+        st.caption("No completed matches.")
+    else:
+        with st.container(border=True, height=FRAME_H):
+            for m in done:
+                opts    = [o.strip() for o in m["options"].split("|") if o.strip()]
+                cur_idx = opts.index(m["result"]) if m["result"] in opts else 0
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns([3, 2, 2])
+                    c1.markdown(f"**{m['title']}**")
+                    c1.caption(f"`{m['match_id']}`  ·  Result: **{m['result']}**  ·  Scoring: **{m.get('scoring_mode','ratio')}**")
+                    new_w = c2.selectbox("Change to", opts, index=cur_idx,
+                                          key=f"corr_{m['match_id']}")
+                    if c3.button("Update Result", key=f"corrb_{m['match_id']}",
+                                  type="primary", disabled=(new_w == m["result"])):
+                        with st.spinner("Recalculating..."):
+                            update_match_result(m["match_id"], new_w)
+                            records = run_points_calculation(m["match_id"], sel_tid, new_w)
+                        st.success(f"Updated to **{new_w}** — points recalculated.")
+                        if email_configured():
+                            _send_result_emails(m, new_w, sel_tid, records)
+                        st.rerun()
 
 # ── Email helper ──────────────────────────────────────────────────────────────
 
@@ -600,14 +624,20 @@ def _send_result_emails(match: dict, result: str,
         # ── Build leaderboard data ────────────────────────────────────────────
         all_points    = get_points(tournament_id=tournament_id)
         all_matches   = get_matches(tournament_id=tournament_id, status="completed")
-        lb_rows       = build_leaderboard(all_points, all_matches, all_users)
 
-        # Last 5 completed matches by date
-        sorted_matches = sorted(all_matches,
-                                key=lambda m: m["match_date"] + m["start_time"])
-        last5          = sorted_matches[-5:]
-        last5_ids      = [m["match_id"] for m in last5]
-        last5_titles   = {m["match_id"]: m["title"][:10] for m in last5}
+        # Sort ascending for streak calc, descending for column display
+        sorted_matches_asc  = sorted(all_matches,
+                                     key=lambda m: m["match_date"] + m["start_time"])
+        match_ids_desc      = [m["match_id"] for m in reversed(sorted_matches_asc)]
+
+        # Pass match_ids_desc as 4th arg (updated signature)
+        lb_rows = build_leaderboard(all_points, sorted_matches_asc,
+                                    match_ids_desc, all_users)
+
+        # Last 5 completed matches — latest first for email columns
+        last5        = sorted_matches_asc[-5:]
+        last5_ids    = [m["match_id"] for m in reversed(last5)]   # latest first
+        last5_titles = {m["match_id"]: m["title"][:10] for m in last5}
 
         # ── Email 2: leaderboard ──────────────────────────────────────────────
         try:
