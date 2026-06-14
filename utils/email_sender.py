@@ -4,7 +4,7 @@ Sends emails via Gmail SMTP.
 Each email has:
   - A plain HTML body (simple, readable in any client)
   - A PNG attachment of the same table rendered with Pillow
-    (white background, black text, Segoe UI font, colour-coded cells)
+    (light gray background, black text, Open Sans font, color-coded cells, thin grid lines)
 """
 
 import smtplib
@@ -13,7 +13,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text      import MIMEText
 from email.mime.base      import MIMEBase
 from email                import encoders
-from datetime             import datetime
+from datetime             import datetime, timezone
 
 import streamlit as st
 
@@ -32,32 +32,29 @@ def email_configured() -> bool:
 
 def _get_font(size: int, bold: bool = False):
     """
-    Font priority (best readability on Ubuntu/Streamlit Cloud):
-      1. Liberation Sans  — metrically identical to Arial/Segoe UI, always on Ubuntu
-      2. DejaVu Sans      — excellent fallback, also always on Ubuntu
-      3. Segoe UI         — available on Windows local dev
-      4. PIL default      — last resort
-    Liberation Sans is specifically designed to match Segoe UI metrics
-    and is pre-installed on every Ubuntu system including Streamlit Cloud.
+    Font priority updated to Open Sans across major environments:
+      1. Open Sans (Standard system/user paths)
+      2. Liberation Sans / DejaVu Sans (Ubuntu fallbacks)
+      3. PIL default
     """
     from PIL import ImageFont
 
     candidates = []
     if bold:
         candidates = [
+            "/usr/share/fonts/truetype/open-sans/OpenSans-Bold.ttf",
+            "C:/Windows/Fonts/opensansb.ttf",
+            "/Library/Fonts/OpenSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-            "C:/Windows/Fonts/segoeuib.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
         ]
     else:
         candidates = [
+            "/usr/share/fonts/truetype/open-sans/OpenSans-Regular.ttf",
+            "C:/Windows/Fonts/opensans.ttf",
+            "/Library/Fonts/OpenSans-Regular.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-            "C:/Windows/Fonts/segoeui.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
         ]
     for path in candidates:
         try:
@@ -67,18 +64,19 @@ def _get_font(size: int, bold: bool = False):
     return ImageFont.load_default()
 
 
-# Cell background colours (RGB) — white background scheme
+# Cell background colours (RGB) — light gray background scheme
 CELL_WIN  = (220, 255, 220)   # light green
 CELL_LOSS = (255, 220, 220)   # light red
 CELL_MISS = (255, 245, 210)   # light amber
 CELL_NONE = (255, 255, 255)   # white
-HDR_BG    = (30,  40,  80)    # dark blue header
-HDR_FG    = (255, 255, 255)   # white header text
+HDR_BG    = (230, 235, 245)   # Light gray header background
+HDR_FG    = (20,  20,  20)    # Near-black header text
 TEXT_BLK  = (20,  20,  20)    # near-black text
 TEXT_WIN  = (20,  120,  40)   # dark green
 TEXT_LOSS = (180,  20,  20)   # dark red
 TEXT_MISS = (160,  90,   0)   # dark amber
-ROW_ALT   = (245, 247, 252)   # very light blue-grey for alternating rows
+ROW_ALT   = (240, 242, 245)   # Light gray for alternating rows
+GRID_CLR  = (210, 215, 225)   # Thin light gray grid line color
 
 
 def _text_colour(cell_bg: tuple) -> tuple:
@@ -92,7 +90,7 @@ def _text_colour(cell_bg: tuple) -> tuple:
 def _cell_bg(val) -> tuple:
     """Determine cell background from raw value."""
     if val is None or val == "":  return CELL_NONE
-    if val == "miss":             return CELL_MISS
+    if val == "miss" or val == "M": return CELL_MISS
     if isinstance(val, str) and val.startswith("−"): return CELL_LOSS
     try:
         f = float(val)
@@ -105,7 +103,7 @@ def _cell_bg(val) -> tuple:
 
 def _fmt_val(val) -> str:
     if val is None or val == "": return "—"
-    if val == "miss":            return "⚠ miss"
+    if val == "miss" or val == "M": return "M"  # Formatted as capital M
     if isinstance(val, str) and val.startswith("−"):
         return f"-{val[1:]}"
     try:
@@ -120,12 +118,7 @@ def _fmt_val(val) -> str:
 def _render_table_png(headers: list[str], rows: list[list],
                        row_cell_bgs: list[list],
                        title: str, subtitle: str) -> bytes:
-    """
-    Render a table as a PNG image.
-    headers        — list of column header strings
-    rows           — list of row value lists (already formatted strings)
-    row_cell_bgs   — parallel list of RGB tuples for each cell background
-    """
+    """Render a table as a PNG image with full grid lines."""
     from PIL import Image, ImageDraw
 
     PADDING    = 20
@@ -135,10 +128,10 @@ def _render_table_png(headers: list[str], rows: list[list],
     SUBTITLE_H = 28
     FOOTER_H   = 28
 
-    font_hdr   = _get_font(16, bold=True)
+    font_hdr   = _get_font(15, bold=True)   # Bold column titles
     font_body  = _get_font(15, bold=False)
     font_title = _get_font(19, bold=True)
-    font_sub   = _get_font(15, bold=False)
+    font_sub   = _get_font(14, bold=False)
 
     # Measure column widths
     dummy = Image.new("RGB", (1, 1))
@@ -151,8 +144,7 @@ def _render_table_png(headers: list[str], rows: list[list],
             if ci < len(row):
                 cw = dc.textlength(str(row[ci]), font=font_body) + 28
                 w  = max(w, cw)
-        # Rank column (#) gets a narrow minimum; all others get standard minimum
-        min_w = 36 if ci == 0 else 60
+        min_w = 40 if ci == 0 else 65
         col_widths.append(max(int(w), min_w))
 
     total_w = sum(col_widths) + PADDING * 2
@@ -164,17 +156,19 @@ def _render_table_png(headers: list[str], rows: list[list],
 
     # Title
     y = PADDING
-    draw.text((PADDING, y), title,
-              font=font_title, fill=(20, 40, 80))
+    draw.text((PADDING, y), title, font=font_title, fill=(20, 40, 80))
     y += TITLE_H
 
-    draw.text((PADDING, y), subtitle,
-              font=font_sub, fill=(100, 100, 120))
+    draw.text((PADDING, y), subtitle, font=font_sub, fill=(100, 100, 120))
     y += SUBTITLE_H
 
-    # Header row
-    x = PADDING
+    table_top_y = y
+
+    # Header row background
     draw.rectangle([PADDING, y, total_w - PADDING, y + HDR_ROW_H], fill=HDR_BG)
+    
+    # Draw header text
+    x = PADDING
     for ci, h in enumerate(headers):
         if ci == 0:
             tw  = draw.textlength(h, font=font_hdr)
@@ -187,20 +181,17 @@ def _render_table_png(headers: list[str], rows: list[list],
 
     # Data rows
     for ri, (row, bgs) in enumerate(zip(rows, row_cell_bgs)):
+        # Alternating striping: light gray vs white
         row_bg = ROW_ALT if ri % 2 == 1 else (255, 255, 255)
         draw.rectangle([PADDING, y, total_w - PADDING, y + ROW_H], fill=row_bg)
 
         x = PADDING
         for ci, (cell_val, cell_bg) in enumerate(zip(row, bgs)):
-            # Colour the cell if not default
-            if cell_bg != row_bg:
-                draw.rectangle([x + 2, y + 2,
-                                x + col_widths[ci] - 2,
-                                y + ROW_H - 2],
-                               fill=cell_bg)
-            fg = _text_colour(cell_bg) if cell_bg != row_bg else TEXT_BLK
+            if cell_bg != row_bg and cell_bg != CELL_NONE:
+                draw.rectangle([x + 1, y + 1, x + col_widths[ci] - 1, y + ROW_H - 1], fill=cell_bg)
+            
+            fg = _text_colour(cell_bg) if (cell_bg != row_bg and cell_bg != CELL_NONE) else TEXT_BLK
 
-            # Rank column: center-align in narrow space
             if ci == 0:
                 tw  = draw.textlength(str(cell_val), font=font_body)
                 tx  = x + max(4, (col_widths[ci] - int(tw)) // 2)
@@ -208,25 +199,29 @@ def _render_table_png(headers: list[str], rows: list[list],
             else:
                 draw.text((x + 8, y + 8), str(cell_val), font=font_body, fill=fg)
             x += col_widths[ci]
-
-        # Row border
-        draw.line([PADDING, y + ROW_H,
-                   total_w - PADDING, y + ROW_H],
-                  fill=(210, 215, 225), width=1)
         y += ROW_H
 
-    # Footer
-    now = datetime.utcnow().strftime("%d %b %Y %H:%M UTC")
-    draw.text((PADDING, y + 6),
-              f"SportsPoll  ·  {now}",
-              font=_get_font(13), fill=(160, 160, 170))
+    table_bottom_y = y
 
-    # Outer border
-    draw.rectangle([PADDING - 1, TITLE_H + SUBTITLE_H + PADDING - 1,
-                    total_w - PADDING + 1,
-                    TITLE_H + SUBTITLE_H + PADDING + HDR_ROW_H +
-                    len(rows) * ROW_H + 1],
-                   outline=(180, 190, 210), width=1)
+    # Draw Gridlines (Vertical and Horizontal lines)
+    # Horizontal grid lines
+    grid_y = table_top_y
+    draw.line([PADDING, grid_y, total_w - PADDING, grid_y], fill=GRID_CLR, width=1) # top boundary
+    grid_y += HDR_ROW_H
+    for _ in range(len(rows)):
+        draw.line([PADDING, grid_y, total_w - PADDING, grid_y], fill=GRID_CLR, width=1)
+        grid_y += ROW_H
+
+    # Vertical grid lines
+    grid_x = PADDING
+    draw.line([grid_x, table_top_y, grid_x, table_bottom_y], fill=GRID_CLR, width=1) # left boundary
+    for w in col_widths:
+        grid_x += w
+        draw.line([grid_x, table_top_y, grid_x, table_bottom_y], fill=GRID_CLR, width=1)
+
+    # Footer
+    now = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
+    draw.text((PADDING, y + 6), f"SportsPoll  ·  {now}", font=_get_font(13), fill=(160, 160, 170))
 
     buf = io.BytesIO()
     img.save(buf, format="PNG", dpi=(150, 150))
@@ -249,9 +244,7 @@ def _build_poll_png(match: dict, votes: list[dict],
             by_opt[opt].append(display_names.get(v["user_id"], v["user_id"]))
         voted_ids.add(v["user_id"])
 
-    no_vote = sorted(
-        display_names[u] for u in display_names if u not in voted_ids
-    )
+    no_vote = sorted(display_names[u] for u in display_names if u not in voted_ids)
 
     headers = ["Option", "Votes", "%", "Win Points", "Voters"]
     rows    = []
@@ -264,7 +257,6 @@ def _build_poll_png(match: dict, votes: list[dict],
         amt    = win_amounts.get(opt, "—")
         names  = ", ".join(voters) if voters else "—"
 
-        # Cell backgrounds per column
         amt_bg = CELL_WIN if amt.startswith("+") else CELL_LOSS
         rows.append([opt, str(count), pct, amt, names])
         bgs.append([CELL_NONE, CELL_NONE, CELL_NONE, amt_bg, CELL_NONE])
@@ -273,7 +265,9 @@ def _build_poll_png(match: dict, votes: list[dict],
         rows.append(["Did not vote", "—", "—", "—", ", ".join(no_vote)])
         bgs.append([CELL_MISS, CELL_NONE, CELL_NONE, CELL_NONE, CELL_NONE])
 
-    title    = f"Voting Results — {match['title']}"
+    # Strips everything after the initial match key marker (e.g. "M1")
+    match_short = match['title'].split(" — ")[0]
+    title    = f"Voting Results — {match_short}"
     subtitle = (f"{tournament_name}  ·  "
                 f"{match['match_date']} {match['start_time']} "
                 f"{match['timezone'].split('/')[-1]}  ·  "
@@ -294,10 +288,8 @@ def send_poll_results(match: dict, votes: list[dict],
         if opt in by_opt:
             by_opt[opt].append(display_names.get(v["user_id"], v["user_id"]))
         voted_ids.add(v["user_id"])
-    no_vote = sorted(display_names[u] for u in display_names
-                     if u not in voted_ids)
+    no_vote = sorted(display_names[u] for u in display_names if u not in voted_ids)
 
-    # Plain HTML body
     rows_html = ""
     for opt in options:
         voters = by_opt[opt]
@@ -317,15 +309,16 @@ def send_poll_results(match: dict, votes: list[dict],
         no_vote_row = (f'<tr><td colspan="5" style="color:#d97706">'
                        f'<b>Did not vote:</b> {", ".join(no_vote)}</td></tr>')
 
-    html = f"""<!DOCTYPE html><html><body style="font-family:'Segoe UI',Arial,sans-serif;
+    match_short = match['title'].split(" — ")[0]
+    html = f"""<!DOCTYPE html><html><body style="font-family:'Open Sans',Arial,sans-serif;
 background:#fff;padding:20px;color:#111">
-<h2 style="color:#1a1f35">Voting Results — {match['title']}</h2>
+<h2 style="color:#1a1f35">Voting Results — {match_short}</h2>
 <p><b>Tournament:</b> {tournament_name}<br>
 <b>Date:</b> {match['match_date']} {match['start_time']} {match['timezone'].split('/')[-1]}<br>
 <b>Total votes:</b> {total}</p>
 <table border="1" cellpadding="8" cellspacing="0"
-       style="border-collapse:collapse;width:100%;font-size:14px">
-<tr style="background:#1a1f35;color:#fff">
+       style="border-collapse:collapse;width:100%;font-size:14px;border-color:#d2d7e1">
+<tr style="background:#e6ebf5;color:#111;font-weight:bold">
 <th>Option</th><th>Votes</th><th>%</th><th>Win Points</th><th>Voters</th>
 </tr>{rows_html}{no_vote_row}</table>
 <p style="font-size:11px;color:#aaa;margin-top:16px">
@@ -334,7 +327,7 @@ See attached PNG for shareable version.</p>
 
     png = _build_poll_png(match, votes, win_amounts, display_names, tournament_name)
     _send(
-        subject  = f"[{tournament_name}] {match['title']} — Voting Results",
+        subject  = f"[{tournament_name}] {match_short} — Voting Results",
         html_body= html,
         png_bytes= png,
         filename = f"poll_{match['match_id']}.png",
@@ -349,7 +342,8 @@ def _build_lb_png(match: dict, result: str,
                   last5_titles: dict,
                   tournament_name: str) -> bytes:
 
-    m_hdrs   = [last5_titles.get(mid, mid[-6:]) for mid in last5_match_ids]
+    # Clean the historical headers to only extract short names like "M1"
+    m_hdrs   = [last5_titles.get(mid, mid[-6:]).split(" — ")[0] for mid in last5_match_ids]
     headers  = ["#", "Player", "Points", "Win%", "Missed"] + m_hdrs
     rows     = []
     bgs      = []
@@ -374,13 +368,12 @@ def _build_lb_png(match: dict, result: str,
             match_bgs.append(bg)
 
         miss_bg = CELL_MISS if miss > 0 else CELL_NONE
-        rows.append([rank, name, pts_str, f"{winp:.0f}%",
-                     str(miss)] + match_vals)
-        bgs.append([CELL_NONE, CELL_NONE, pts_bg, CELL_NONE,
-                    miss_bg] + match_bgs)
+        rows.append([rank, name, pts_str, f"{winp:.0f}%", str(miss)] + match_vals)
+        bgs.append([CELL_NONE, CELL_NONE, pts_bg, CELL_NONE, miss_bg] + match_bgs)
 
+    match_short = match['title'].split(" — ")[0]
     title    = f"Leaderboard — {tournament_name}"
-    subtitle = f"After {match['title']}  ·  Result: {result} Won"
+    subtitle = f"After {match_short}  ·  Result: {result} Won"
     return _render_table_png(headers, rows, bgs, title, subtitle)
 
 
@@ -390,7 +383,7 @@ def send_leaderboard(match: dict, result: str,
                      last5_titles: dict,
                      tournament_name: str):
 
-    m_hdrs    = "".join(f"<th>{last5_titles.get(mid,mid[-6:])}</th>"
+    m_hdrs    = "".join(f"<th>{last5_titles.get(mid,mid[-6:]).split(' — ')[0]}</th>"
                         for mid in last5_match_ids)
     medals    = ["🥇","🥈","🥉"]
     rows_html = ""
@@ -408,7 +401,7 @@ def send_leaderboard(match: dict, result: str,
         for mid in last5_match_ids:
             val = row.get(mid)
             if val is None:   mcells += "<td>—</td>"
-            elif val == "miss": mcells += '<td style="color:#d97706">miss</td>'
+            elif val == "miss" or val == "M": mcells += '<td style="color:#d97706">M</td>'
             else:
                 try:
                     f   = float(val)
@@ -424,13 +417,14 @@ def send_leaderboard(match: dict, result: str,
           <td style="color:{pts_c};font-weight:700">{pts_s}</td>
           <td>{winp:.0f}%</td><td>{miss}</td>{mcells}</tr>"""
 
-    html = f"""<!DOCTYPE html><html><body style="font-family:'Segoe UI',Arial,sans-serif;
+    match_short = match['title'].split(" — ")[0]
+    html = f"""<!DOCTYPE html><html><body style="font-family:'Open Sans',Arial,sans-serif;
 background:#fff;padding:20px;color:#111">
 <h2 style="color:#1a1f35">Leaderboard — {tournament_name}</h2>
-<p><b>After:</b> {match['title']}<br><b>Result:</b> {result} Won</p>
+<p><b>After:</b> {match_short}<br><b>Result:</b> {result} Won</p>
 <table border="1" cellpadding="8" cellspacing="0"
-       style="border-collapse:collapse;width:100%;font-size:14px">
-<tr style="background:#1a1f35;color:#fff">
+       style="border-collapse:collapse;width:100%;font-size:14px;border-color:#d2d7e1">
+<tr style="background:#e6ebf5;color:#111;font-weight:bold">
 <th>#</th><th>Player</th><th>Points</th><th>Win%</th><th>Missed</th>{m_hdrs}
 </tr>{rows_html}</table>
 <p style="font-size:12px;color:#aaa;margin-top:12px">
@@ -441,7 +435,7 @@ See attached PNG for shareable version.</p>
     png = _build_lb_png(match, result, leaderboard_rows,
                         last5_match_ids, last5_titles, tournament_name)
     _send(
-        subject  = f"[{tournament_name}] Leaderboard after {match['title']}",
+        subject  = f"[{tournament_name}] Leaderboard after {match_short}",
         html_body= html,
         png_bytes= png,
         filename = f"leaderboard_{match['match_id']}.png",
