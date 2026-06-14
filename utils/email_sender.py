@@ -130,6 +130,7 @@ def _render_table_png(headers: list[str], rows: list[list],
 
     font_hdr   = _get_font(15, bold=True)   # Bold column titles
     font_body  = _get_font(15, bold=False)
+    font_bold  = _get_font(15, bold=True)    # Font variant to make specific columns bold
     font_title = _get_font(19, bold=True)
     font_sub   = _get_font(14, bold=False)
 
@@ -142,7 +143,9 @@ def _render_table_png(headers: list[str], rows: list[list],
         w = dc.textlength(h, font=font_hdr) + 28
         for row in rows:
             if ci < len(row):
-                cw = dc.textlength(str(row[ci]), font=font_body) + 28
+                # Account for bolding on column index 1 when estimating sizing dimensions
+                active_font = font_bold if ci == 1 else font_body
+                cw = dc.textlength(str(row[ci]), font=active_font) + 28
                 w  = max(w, cw)
         min_w = 40 if ci == 0 else 65
         col_widths.append(max(int(w), min_w))
@@ -167,7 +170,7 @@ def _render_table_png(headers: list[str], rows: list[list],
     # Header row background
     draw.rectangle([PADDING, y, total_w - PADDING, y + HDR_ROW_H], fill=HDR_BG)
     
-    # Draw header text
+    # Draw header text (Bold)
     x = PADDING
     for ci, h in enumerate(headers):
         if ci == 0:
@@ -191,13 +194,16 @@ def _render_table_png(headers: list[str], rows: list[list],
                 draw.rectangle([x + 1, y + 1, x + col_widths[ci] - 1, y + ROW_H - 1], fill=cell_bg)
             
             fg = _text_colour(cell_bg) if (cell_bg != row_bg and cell_bg != CELL_NONE) else TEXT_BLK
+            
+            # Select bold font variant if rendering the player name/option column (Index 1)
+            active_font = font_bold if ci == 1 else font_body
 
             if ci == 0:
-                tw  = draw.textlength(str(cell_val), font=font_body)
+                tw  = draw.textlength(str(cell_val), font=active_font)
                 tx  = x + max(4, (col_widths[ci] - int(tw)) // 2)
-                draw.text((tx, y + 8), str(cell_val), font=font_body, fill=fg)
+                draw.text((tx, y + 8), str(cell_val), font=active_font, fill=fg)
             else:
-                draw.text((x + 8, y + 8), str(cell_val), font=font_body, fill=fg)
+                draw.text((x + 8, y + 8), str(cell_val), font=active_font, fill=fg)
             x += col_widths[ci]
         y += ROW_H
 
@@ -265,7 +271,6 @@ def _build_poll_png(match: dict, votes: list[dict],
         rows.append(["Did not vote", "—", "—", "—", ", ".join(no_vote)])
         bgs.append([CELL_MISS, CELL_NONE, CELL_NONE, CELL_NONE, CELL_NONE])
 
-    # Strips everything after the initial match key marker (e.g. "M1")
     match_short = match['title'].split(" — ")[0]
     title    = f"Voting Results — {match_short}"
     subtitle = (f"{tournament_name}  ·  "
@@ -299,7 +304,7 @@ def send_poll_results(match: dict, votes: list[dict],
         names  = ", ".join(voters) if voters else "—"
         colour = "#16a34a" if amt.startswith("+") else "#dc2626"
         rows_html += f"""<tr>
-          <td>{opt}</td><td>{count}</td><td>{pct}%</td>
+          <td><b>{opt}</b></td><td>{count}</td><td>{pct}%</td>
           <td style="color:{colour};font-weight:700">{amt}</td>
           <td style="color:#555">{names}</td>
         </tr>"""
@@ -342,7 +347,6 @@ def _build_lb_png(match: dict, result: str,
                   last5_titles: dict,
                   tournament_name: str) -> bytes:
 
-    # Clean the historical headers to only extract short names like "M1"
     m_hdrs   = [last5_titles.get(mid, mid[-6:]).split(" — ")[0] for mid in last5_match_ids]
     headers  = ["#", "Player", "Points", "Win%", "Missed"] + m_hdrs
     rows     = []
