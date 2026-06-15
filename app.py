@@ -83,16 +83,21 @@ def render_navbar(user: dict):
     st.markdown("---")
 
     chosen_page = keys[labels.index(chosen_label)]
-    last_nav    = st.session_state.get("_last_nav", cur_page)
+
+    # _last_nav tracks what the navbar dropdown was last explicitly set to.
+    # Only navigate when the user actually moves the dropdown.
+    # Button navigations (match, leaderboard, etc.) set both page AND
+    # _last_nav themselves, so the navbar leaves them undisturbed.
+    last_nav = st.session_state.get("_last_nav", "home")
 
     if chosen_page != last_nav:
+        # User moved the dropdown — honour it
         st.session_state["_last_nav"] = chosen_page
         st.session_state["page"]      = chosen_page
         st.session_state["match_id"]  = None
         st.rerun()
-    else:
-        if cur_page in page_map:
-            st.session_state["_last_nav"] = cur_page
+    # else: dropdown matches last user selection — do nothing,
+    # allow any page set by buttons to render undisturbed
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
