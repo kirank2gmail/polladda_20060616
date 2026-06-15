@@ -1,9 +1,8 @@
 """
 pages/home.py
-Home page — tournament selector, three scrollable match frames.
-  1. Upcoming    — voting still open
-  2. In Progress — voting closed, result not yet updated
-  3. Past        — completed matches, newest first
+Home page — tournament selector, scrollable match frames.
+Upcoming: ALL upcoming matches in a scrollable frame (height shows ~5, scroll for rest).
+Past:     ALL completed matches in a scrollable frame, most recent first.
 """
 
 import streamlit as st
@@ -44,18 +43,17 @@ def show_home(user: dict):
         st.info("No matches scheduled yet.")
         return
 
-    # Categorise matches
     upcoming    = [m for m in all_matches
                    if m["status"] == "upcoming" and is_voting_open(m)]
     in_progress = [m for m in all_matches
                    if m["status"] == "upcoming" and not is_voting_open(m)]
     completed   = [m for m in all_matches if m["status"] == "completed"]
 
-    # ── 1. Upcoming — voting open ─────────────────────────────────────────────
+    # ── Upcoming — ALL matches in scrollable frame ────────────────────────────
     n_up = len(upcoming)
     st.markdown(f"### 📌 Upcoming Matches  ({n_up})")
     if not upcoming:
-        st.caption("No upcoming matches with open voting.")
+        st.caption("No upcoming matches.")
     else:
         with st.container(border=True, height=FRAME_HEIGHT):
             for idx, m in enumerate(upcoming):
@@ -65,14 +63,13 @@ def show_home(user: dict):
 
     st.markdown("")
 
-    # ── 2. In Progress — poll closed, awaiting result ─────────────────────────
+    # ── 2. In Progress — poll closed, result not yet entered ──────────────────
     n_ip = len(in_progress)
     st.markdown(f"### ⏳ In Progress  ({n_ip})")
     st.caption("Voting closed — result not yet updated by admin.")
     if not in_progress:
         st.caption("No matches awaiting result.")
     else:
-        # Height adapts to content — cap at FRAME_HEIGHT
         frame_h = min(FRAME_HEIGHT, 100 + n_ip * 110)
         with st.container(border=True, height=frame_h):
             for idx, m in enumerate(in_progress):
@@ -83,48 +80,43 @@ def show_home(user: dict):
 
     st.markdown("")
 
-    # ── 3. Past — completed, newest first ────────────────────────────────────
+    # ── 3. Past — ALL completed matches in scrollable frame, newest first ──────
     n_done = len(completed)
     st.markdown(f"### 📋 Past Matches  ({n_done})")
     if not completed:
         st.caption("No completed matches yet.")
     else:
-        completed_desc = list(reversed(completed))
+        completed_desc = list(reversed(completed))   # newest first
         with st.container(border=True, height=FRAME_HEIGHT):
             for idx, m in enumerate(completed_desc):
-                _card_completed(m, user["user_id"], user_tz,
-                                sel_tid, all_matches)
+                _card_completed(m, user["user_id"], user_tz, sel_tid, all_matches)
                 if idx < n_done - 1:
                     st.divider()
 
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        if st.button("🏅 View Full Leaderboard", use_container_width=True,
-                     key="home_lb_btn"):
+        if st.button("🏅 View Full Leaderboard", use_container_width=True):
             st.session_state["tournament_id"] = sel_tid
             st.session_state["page"]          = "leaderboard"
             st.session_state["_last_nav"]     = "leaderboard"
             st.rerun()
 
 
-# ── Navigation helper ─────────────────────────────────────────────────────────
-
 def _go_match(match_id: str, tournament_id: str, all_matches: list):
     st.session_state["page"]                = "match"
     st.session_state["match_id"]            = match_id
     st.session_state["match_tournament_id"] = tournament_id
     st.session_state["match_list"]          = [m["match_id"] for m in all_matches]
-    st.session_state["_last_nav"]           = "match"
+    st.session_state["_last_nav"]           = "home"
     st.rerun()
 
-
-# ── Match cards ───────────────────────────────────────────────────────────────
 
 def _card_upcoming(m, user_id, user_tz, tournament_id, all_matches):
     existing  = get_user_vote(user_id, m["match_id"])
     times     = format_match_times(m, user_tz)
     msg, sev  = format_countdown(m)
+    open_vote = is_voting_open(m)
 
     c1, c2, c3 = st.columns([4, 3, 2])
     with c1:
@@ -142,17 +134,16 @@ def _card_upcoming(m, user_id, user_tz, tournament_id, all_matches):
             label = "Change →"
         else:
             label = "Vote Now →"
-        if st.button(label, key=f"home_btn_{m['match_id']}",
-                     use_container_width=True, type="primary"):
-            _go_match(m["match_id"], tournament_id, all_matches)
+        if open_vote:
+            if st.button(label, key=f"home_btn_{m['match_id']}",
+                         use_container_width=True, type="primary"):
+                _go_match(m["match_id"], tournament_id, all_matches)
+        else:
+            st.caption("Voting closed")
 
 
 def _card_in_progress(m, user_id, user_tz, tournament_id, all_matches):
-    """
-    Voting closed, result not yet entered.
-    Shows the player's own vote and links to match page
-    where full poll results are now visible to all.
-    """
+    """Poll closed, result not yet entered. Shows vote and link to poll results."""
     existing = get_user_vote(user_id, m["match_id"])
     times    = format_match_times(m, user_tz)
 
@@ -189,9 +180,7 @@ def _card_completed(m, user_id, user_tz, tournament_id, all_matches):
         st.markdown(f"Result: **{result}**")
         if existing:
             correct = existing["vote"] == result
-            st.caption(
-                f"Your vote: {existing['vote']} {'✅' if correct else '❌'}"
-            )
+            st.caption(f"Your vote: {existing['vote']} {'✅' if correct else '❌'}")
         else:
             st.caption("⚠️ No vote cast")
     with c3:
