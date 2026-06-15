@@ -215,10 +215,33 @@ def _deduplicate_votes(match_id: str):
         write_table("votes", cleaned)
 
 
+ABANDONED = "abandoned"   # sentinel returned when match has no voters
+
+
 def run_points_calculation(match_id: str, tournament_id: str,
-                            winning_option: str) -> list[dict]:
-    """Dedup votes → delete old points → recalculate → save."""
+                            winning_option: str):
+    """
+    Dedup votes → check for voters → calculate → save.
+
+    Returns:
+      list[dict]  — point records on success
+      ABANDONED   — sentinel string when no votes exist (caller handles UI)
+
+    When abandoned:
+      - No points written
+      - Missed votes NOT counted (match never happened)
+      - Caller should call mark_match_abandoned() to update match status
+    """
     _deduplicate_votes(match_id)
+
+    # Check if any votes exist for this match
+    votes = read_table("votes")
+    match_votes = [v for v in votes if v.get("match_id") == match_id]
+    if not match_votes:
+        # No voters — abandon the match, do not calculate points
+        delete_match_points(match_id)   # clear any stale points
+        return ABANDONED
+
     delete_match_points(match_id)
     records = calculate_match_points(match_id, tournament_id, winning_option)
     if records:
