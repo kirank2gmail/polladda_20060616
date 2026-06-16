@@ -253,28 +253,15 @@ def _deduplicate_votes(match_id: str):
         write_table("votes", cleaned)
 
 
-def _mark_abandoned_in_matches(match_id: str):
-    """Set result and status to 'abandoned' in the matches table."""
-    matches = read_table("matches")
-    for m in matches:
-        if m["match_id"] == match_id:
-            m["result"] = "abandoned"
-            m["status"] = "abandoned"
-    write_table("matches", matches)
-
-
 def run_points_calculation(match_id: str, tournament_id: str,
                             winning_option: str):
     """
     Dedup votes → check voters → calculate → save.
-    Returns ABANDONED (sentinel string) in two cases:
-      1. No votes at all for the match.
-      2. Votes exist but no one voted for the winning option (no winners).
+    Returns ABANDONED (sentinel string) when no votes exist.
     Returns list[dict] of point records on success.
 
     When abandoned:
-      - All point records for the match are deleted (clears stale misses
-        and ensures missed voters are not penalised)
+      - All point records for the match are deleted (clears stale misses)
       - Match status set to "abandoned" so future miss calculations skip it
     """
     _deduplicate_votes(match_id)
@@ -282,17 +269,32 @@ def run_points_calculation(match_id: str, tournament_id: str,
     match_votes = [v for v in read_table("votes")
                    if v.get("match_id") == match_id]
 
-    # ── Case 1: no votes at all ───────────────────────────────────────────────
     if not match_votes:
+        # Delete all point records (winners, losers, misses) for this match
         delete_match_points(match_id)
-        _mark_abandoned_in_matches(match_id)
+        # Mark match abandoned so _count_prior_misses skips it
+        matches = read_table("matches")
+        for m in matches:
+            if m["match_id"] == match_id:
+                m["result"] = "abandoned"
+                m["status"] = "abandoned"
+        write_table("matches", matches)
         return ABANDONED
 
-    # ── Case 2: votes exist but nobody picked the winner ─────────────────────
-    winner_votes = [v for v in match_votes if v.get("vote") == winning_option]
-    if not winner_votes:
+    # ── Abandon if no winners ─────────────────────────────────────────────────
+    # Case 1: nobody voted for the winning option.
+    # Case 2: all votes are for the same option (no meaningful contest).
+    # In both cases — clear points, mark abandoned, skip miss counting.
+    winner_votes   = [v for v in match_votes if v.get("vote") == winning_option]
+    unique_options = {v.get("vote") for v in match_votes}
+    if not winner_votes or len(unique_options) == 1:
         delete_match_points(match_id)
-        _mark_abandoned_in_matches(match_id)
+        matches = read_table("matches")
+        for m in matches:
+            if m["match_id"] == match_id:
+                m["result"] = "abandoned"
+                m["status"] = "abandoned"
+        write_table("matches", matches)
         return ABANDONED
 
     delete_match_points(match_id)
