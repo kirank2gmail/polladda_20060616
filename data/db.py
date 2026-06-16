@@ -241,30 +241,34 @@ def get_user_vote(user_id: str, match_id: str) -> dict | None:
 
 def cast_vote(user_id: str, match_id: str, tid: str, vote: str):
     ensure_registered(user_id, tid)   # auto-register on first vote
-    # Remove any existing vote first to prevent duplicates
-    _delete_where("votes",
-        lambda r: r["user_id"] == user_id and r["match_id"] == match_id)
-    _insert("votes", {
+    # Single read-modify-write — removes duplicate and inserts in one GCS write
+    votes = read_table("votes")
+    votes = [v for v in votes
+             if not (v["user_id"] == user_id and v["match_id"] == match_id)]
+    votes.append({
         "vote_id"      : _uid(), "user_id": user_id,
         "match_id"     : match_id, "tournament_id": tid,
         "vote"         : vote, "voted_at": _now(),
         "updated_at"   : "", "update_count": 0})
+    write_table("votes", votes)
 
 def update_vote(user_id: str, match_id: str, new_vote: str):
-    # Read current vote to get update_count before deleting
-    existing = get_user_vote(user_id, match_id)
+    # Single read-modify-write — no separate delete + insert
+    votes     = read_table("votes")
+    existing  = next((v for v in votes
+                      if v["user_id"] == user_id and v["match_id"] == match_id), None)
     cur_count = int((existing or {}).get("update_count", 0))
     voted_at  = (existing or {}).get("voted_at", _now())
-    # Remove all existing votes for this user+match (cleans duplicates too)
-    _delete_where("votes",
-        lambda r: r["user_id"] == user_id and r["match_id"] == match_id)
-    # Re-insert as single clean record
-    tid = (existing or {}).get("tournament_id", "")
-    _insert("votes", {
+    tid       = (existing or {}).get("tournament_id", "")
+    # Remove all existing votes for this user+match, then append updated
+    votes = [v for v in votes
+             if not (v["user_id"] == user_id and v["match_id"] == match_id)]
+    votes.append({
         "vote_id"      : _uid(), "user_id": user_id,
         "match_id"     : match_id, "tournament_id": tid,
         "vote"         : new_vote, "voted_at": voted_at,
         "updated_at"   : _now(), "update_count": cur_count + 1})
+    write_table("votes", votes)
 
 def delete_vote(user_id: str, match_id: str):
     _delete_where("votes",
