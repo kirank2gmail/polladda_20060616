@@ -64,7 +64,9 @@ def _count_prior_misses(user_id: str, match_id: str,
     Only counts from the player's FIRST voted match — matches before
     that are not counted as misses (player wasn't participating yet).
     """
-    all_matches = _get_matches(tournament_id=tournament_id, status="completed")
+    # Only count non-abandoned completed matches
+    all_matches = [m for m in _get_matches(tournament_id=tournament_id, status="completed")
+                   if m.get("result") != "abandoned" and m.get("status") != "abandoned"]
     all_votes   = _get_votes(tournament_id=tournament_id)
     this_match  = next((m for m in all_matches
                         if m["match_id"] == match_id), None)
@@ -235,31 +237,39 @@ def run_points_calculation(match_id: str, tournament_id: str,
     """
     Dedup votes → check for voters → calculate → save.
 
-    If no votes exist:
-      - Deletes ALL point records for this match (including any stale miss records
-        that may have been saved in a previous calculation)
-      - Marks match as abandoned in the matches table
-      - Returns ABANDONED sentinel
+    If no votes exist for the match:
+      - Deletes ALL point records for this match (including any previously
+        saved miss/penalty records so leaderboard missed count is corrected)
+      - Updates match status to "abandoned" so it is excluded from future
+        miss counting in _count_prior_misses
+      - Returns ABANDONED sentinel string
 
     Returns list[dict] of point records on success.
     """
     _deduplicate_votes(match_id)
 
     # Check if any votes exist for this match
-    match_votes = [v for v in read_table("votes")
-                   if v.get("match_id") == match_id]
+    all_votes   = read_table("votes")
+    match_votes = [v for v in all_votes if v.get("match_id") == match_id]
 
     if not match_votes:
-        # Delete ALL point records for this match — including any previously
-        # saved miss/penalty records so leaderboard missed count is correct
+        # Step 1: delete ALL point records for this match
+        # This removes any previously saved miss/penalty/winner records
+        # so the leaderboard missed count is immediately corrected
         delete_match_points(match_id)
-        # Update match status to abandoned directly here
+
+        # Step 2: mark match as abandoned in matches table
+        # This excludes it from _count_prior_misses for future calculations
         matches = read_table("matches")
+        updated = False
         for m in matches:
             if m["match_id"] == match_id:
                 m["result"] = "abandoned"
                 m["status"] = "abandoned"
-        write_table("matches", matches)
+                updated = True
+        if updated:
+            write_table("matches", matches)
+
         return ABANDONED
 
     delete_match_points(match_id)
