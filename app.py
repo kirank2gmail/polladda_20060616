@@ -31,6 +31,7 @@ from data.db import (
     update_user_timezone
 )
 from utils.timezone import COMMON_TIMEZONES
+from data.activity_log import log_login
 import pytz
 
 for k, v in [("user", None), ("page", "home"),
@@ -154,6 +155,7 @@ def show_login():
                         st.session_state["user"]      = u
                         st.session_state["page"]      = "home"
                         st.session_state["_last_nav"] = "home"
+                        log_login(u["user_id"])
                         st.rerun()
                     else:
                         st.error("Username or password is incorrect.")
