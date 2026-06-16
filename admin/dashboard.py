@@ -522,7 +522,6 @@ def _results_tab():
                             update_match_result(m["match_id"], winner)
                             records = run_points_calculation(m["match_id"], sel_tid, winner)
                         if records is ABANDONED:
-                            mark_match_abandoned(m["match_id"])
                             st.warning(
                                 f"**{m['title']}** has no votes — "
                                 "automatically marked as abandoned. No points calculated."
@@ -594,8 +593,10 @@ def _results_tab():
                             records = run_points_calculation(
                                 m["match_id"], sel_tid, new_w)
                         if records is ABANDONED:
-                            mark_match_abandoned(m["match_id"])
-                            st.warning("No votes found — match remains abandoned.")
+                            st.warning(
+                                f"**{m['title']}** has no votes — "
+                                "marked as abandoned. Leaderboard updated."
+                            )
                         else:
                             st.success(f"Updated to **{new_w}** — points recalculated.")
                             if email_configured():
@@ -615,12 +616,9 @@ def _results_tab():
                                     records = run_points_calculation(
                                         m["match_id"], sel_tid, cur_res)
                                 if records is ABANDONED:
-                                    # No votes exist — clear all points and missed records
-                                    mark_match_abandoned(m["match_id"])
                                     st.warning(
-                                        "No votes found for this match — "
-                                        "points and missed records cleared. "
-                                        "Marked as abandoned."
+                                        f"**{m['title']}** has no votes — "
+                                        "marked as abandoned. Missed counts cleared."
                                     )
                                 else:
                                     correct = sum(1 for r in records
