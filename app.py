@@ -31,7 +31,7 @@ from data.db import (
     update_user_timezone
 )
 from utils.timezone import COMMON_TIMEZONES
-from utils.cookie_auth import init_auth, save_auth, clear_auth
+from utils.cookie_auth import save_session_cookie, load_session_cookie, clear_session_cookie
 import pytz
 
 for k, v in [("user", None), ("page", "home"),
@@ -77,7 +77,7 @@ def render_navbar(user: dict):
         f"👤 {nick}</div>", unsafe_allow_html=True)
 
     if c_out.button("Sign Out", use_container_width=True, key="signout_btn"):
-        clear_auth()
+        clear_session_cookie()
         for k in ("user","page","match_id","tournament_id","_last_nav"):
             st.session_state[k] = None if k == "user" else "home"
         st.rerun()
@@ -156,7 +156,7 @@ def show_login():
                         st.session_state["user"]      = u
                         st.session_state["page"]      = "home"
                         st.session_state["_last_nav"] = "home"
-                        save_auth(u["user_id"])
+                        save_session_cookie(u["user_id"])
                         st.rerun()
                     else:
                         st.error("Username or password is incorrect.")
@@ -270,22 +270,17 @@ def route(user: dict):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-# init_auth() must run before anything else — renders the invisible
-# localStorage component and returns user_id if session is valid.
-_auth_user_id = init_auth()
-
 user = st.session_state.get("user")
 
-if not user and _auth_user_id:
-    # Valid localStorage session — restore without showing login
-    u = get_user_by_id(_auth_user_id)
-    if u and not u.get("must_change_password"):
-        st.session_state["user"]      = u
-        st.session_state["page"]      = "home"
-        st.session_state["_last_nav"] = "home"
-        st.rerun()
-
 if not user:
+    cookie_user_id = load_session_cookie()
+    if cookie_user_id:
+        u = get_user_by_id(cookie_user_id)
+        if u and not u.get("must_change_password"):
+            st.session_state["user"]      = u
+            st.session_state["page"]      = "home"
+            st.session_state["_last_nav"] = "home"
+            st.rerun()
     show_login()
     st.stop()
 
