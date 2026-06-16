@@ -273,6 +273,10 @@ def route(user: dict):
 user = st.session_state.get("user")
 
 if not user:
+    # load_session_cookie() renders the invisible localStorage component.
+    # On first page load it returns None (component not yet mounted).
+    # Streamlit auto-reruns once the component sends its value (~200ms).
+    # On second run the stored session is available and login is skipped.
     cookie_user_id = load_session_cookie()
     if cookie_user_id:
         u = get_user_by_id(cookie_user_id)
