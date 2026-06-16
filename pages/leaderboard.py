@@ -205,10 +205,7 @@ def show_leaderboard(user: dict):
         unsafe_allow_html=True
     )
 
-    # Expandable fullscreen view
-    with st.expander("⛶ Expand table", expanded=True):
-
-        table_html = f"""
+    table_html = f"""
     <style>
       .lb-table {{ width:100%; border-collapse:collapse; font-family:Arial,sans-serif; }}
       .lb-table td {{ white-space:nowrap; }}
@@ -223,7 +220,7 @@ def show_leaderboard(user: dict):
       </table>
     </div>
     """
-        st.html(table_html)
+    st.html(table_html)
 
     # ── Match Details — bordered frame, 6 per row ──────────────────────────────
     if match_ids_desc:
@@ -232,7 +229,7 @@ def show_leaderboard(user: dict):
         COLS_PER_ROW = 6
         chunks       = [match_ids_desc[i:i+COLS_PER_ROW]
                         for i in range(0, len(match_ids_desc), COLS_PER_ROW)]
-        frame_h = min(len(chunks), 5) * 48 + 16
+        frame_h = min(len(chunks), 5) * 48 * 2 + 16
 
         with st.container(border=True, height=frame_h):
             for chunk in chunks:
