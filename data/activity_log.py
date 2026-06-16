@@ -35,20 +35,43 @@ def _get_name(user_id: str) -> str:
 
 
 def _log(user_id: str, event: str, details: dict = None):
-    """Append one activity record to GCS."""
+    """
+    Queue activity record in session state.
+    Writes to GCS only when queue reaches 5 events or on flush.
+    This avoids a GCS write on every vote action.
+    """
     try:
-        records = read_table("activity_log")
-        records.append({
+        record = {
             "event_id"  : _uid(),
             "user_id"   : user_id,
             "user_name" : _get_name(user_id),
             "event"     : event,
             "timestamp" : _now(),
             "details"   : details or {},
-        })
-        write_table("activity_log", records)
+        }
+        queue = st.session_state.get("_activity_queue", [])
+        queue.append(record)
+        st.session_state["_activity_queue"] = queue
+
+        # Flush to GCS when queue has 5+ records, or for login events
+        if len(queue) >= 5 or event == "login":
+            _flush()
     except Exception:
-        pass   # logging failure must never break the app
+        pass
+
+
+def _flush():
+    """Write queued activity records to GCS in one batch write."""
+    try:
+        queue = st.session_state.get("_activity_queue", [])
+        if not queue:
+            return
+        records = read_table("activity_log")
+        records.extend(queue)
+        write_table("activity_log", records)
+        st.session_state["_activity_queue"] = []
+    except Exception:
+        pass
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
