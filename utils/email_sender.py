@@ -76,6 +76,7 @@ def _get_font(size: int, bold: bool = False):
 
 
 # Cell background colours (RGB) — light gray background scheme
+CELL_ABAND = (215, 215, 215)  # light grey — abandoned
 CELL_WIN  = (220, 255, 220)   # light green
 CELL_LOSS = (255, 220, 220)   # light red
 CELL_MISS = (255, 245, 210)   # light amber
@@ -95,12 +96,14 @@ def _text_colour(cell_bg: tuple) -> tuple:
     if cell_bg == CELL_WIN:   return TEXT_WIN
     if cell_bg == CELL_LOSS:  return TEXT_LOSS
     if cell_bg == CELL_MISS:  return TEXT_MISS
+    if cell_bg == CELL_ABAND: return (100, 100, 100)
     return TEXT_BLK
 
 
 def _cell_bg(val) -> tuple:
     """Determine cell background from raw value."""
     if val is None or val == "":  return CELL_NONE
+    if val == "A":                  return CELL_ABAND
     if val == "miss" or val == "M": return CELL_MISS
     if isinstance(val, str) and val.startswith("−"): return CELL_LOSS
     try:
@@ -114,6 +117,7 @@ def _cell_bg(val) -> tuple:
 
 def _fmt_val(val) -> str:
     if val is None or val == "": return "—"
+    if val == "A":                  return "A"   # abandoned
     if val == "miss" or val == "M": return "M"  # Formatted as capital M
     if isinstance(val, str) and val.startswith("−"):
         return f"-{val[1:]}"
@@ -416,6 +420,7 @@ def send_leaderboard(match: dict, result: str,
         for mid in last5_match_ids:
             val = row.get(mid)
             if val is None:   mcells += "<td>—</td>"
+            elif val == "A":  mcells += '<td style="color:#888;background:#ddd">A</td>'
             elif val == "miss" or val == "M": mcells += '<td style="color:#d97706">M</td>'
             else:
                 try:
