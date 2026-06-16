@@ -60,31 +60,48 @@ def _now():
 def _count_prior_misses(user_id: str, match_id: str,
                          tournament_id: str) -> int:
     """
-    Count matches this user missed BEFORE match_id.
-    Only counts from the player's FIRST voted match — matches before
-    that are not counted as misses (player wasn't participating yet).
+    Count matches this user missed BEFORE match_id in this tournament.
+
+    Rules:
+      - Only non-abandoned completed matches are considered.
+      - Misses only count for matches that START STRICTLY AFTER the
+        date+time of the player's first ever voted match in this tournament.
+        (Matches on or before first vote date are not counted — player
+         wasn't participating yet.)
+      - Player with zero votes has zero misses.
     """
-    # Only count non-abandoned completed matches
-    all_matches = [m for m in _get_matches(tournament_id=tournament_id, status="completed")
-                   if m.get("result") != "abandoned" and m.get("status") != "abandoned"]
-    all_votes   = _get_votes(tournament_id=tournament_id)
-    this_match  = next((m for m in all_matches
-                        if m["match_id"] == match_id), None)
+    # Exclude abandoned matches from miss counting
+    all_matches = [m for m in _get_matches(tournament_id=tournament_id,
+                                            status="completed")
+                   if m.get("result") != "abandoned"
+                   and m.get("status") != "abandoned"]
+
+    all_votes  = _get_votes(tournament_id=tournament_id)
+    this_match = next((m for m in all_matches
+                       if m["match_id"] == match_id), None)
     if not this_match:
         return 0
-    this_dt   = f"{this_match['match_date']} {this_match['start_time']}"
+
+    this_dt    = f"{this_match['match_date']} {this_match['start_time']}"
     user_votes = [v for v in all_votes if v["user_id"] == user_id]
     voted_ids  = {v["match_id"] for v in user_votes}
-    # Find player's earliest voted match in this tournament
-    voted_dts  = [f"{m['match_date']} {m['start_time']}"
-                  for m in all_matches if m["match_id"] in voted_ids]
+
+    # Find the date+time of the player's FIRST voted match
+    voted_dts = [f"{m['match_date']} {m['start_time']}"
+                 for m in all_matches if m["match_id"] in voted_ids]
     if not voted_dts:
-        return 0   # never voted — no misses
+        return 0   # never voted in this tournament — no misses
+
     first_vote_dt = min(voted_dts)
+
+    # Count matches that:
+    #   1. Start STRICTLY AFTER first voted match (player was participating)
+    #   2. Start before this match
+    #   3. Player did not vote in
     return sum(
         1 for m in all_matches
         if m["match_id"] != match_id
-        and f"{m['match_date']} {m['start_time']}" >= first_vote_dt
+        and f"{m['match_date']} {m['start_time']}" > first_vote_dt
         and f"{m['match_date']} {m['start_time']}" < this_dt
         and m["match_id"] not in voted_ids
     )
@@ -235,41 +252,29 @@ def _deduplicate_votes(match_id: str):
 def run_points_calculation(match_id: str, tournament_id: str,
                             winning_option: str):
     """
-    Dedup votes → check for voters → calculate → save.
-
-    If no votes exist for the match:
-      - Deletes ALL point records for this match (including any previously
-        saved miss/penalty records so leaderboard missed count is corrected)
-      - Updates match status to "abandoned" so it is excluded from future
-        miss counting in _count_prior_misses
-      - Returns ABANDONED sentinel string
-
+    Dedup votes → check voters → calculate → save.
+    Returns ABANDONED (sentinel string) when no votes exist.
     Returns list[dict] of point records on success.
+
+    When abandoned:
+      - All point records for the match are deleted (clears stale misses)
+      - Match status set to "abandoned" so future miss calculations skip it
     """
     _deduplicate_votes(match_id)
 
-    # Check if any votes exist for this match
-    all_votes   = read_table("votes")
-    match_votes = [v for v in all_votes if v.get("match_id") == match_id]
+    match_votes = [v for v in read_table("votes")
+                   if v.get("match_id") == match_id]
 
     if not match_votes:
-        # Step 1: delete ALL point records for this match
-        # This removes any previously saved miss/penalty/winner records
-        # so the leaderboard missed count is immediately corrected
+        # Delete all point records (winners, losers, misses) for this match
         delete_match_points(match_id)
-
-        # Step 2: mark match as abandoned in matches table
-        # This excludes it from _count_prior_misses for future calculations
+        # Mark match abandoned so _count_prior_misses skips it
         matches = read_table("matches")
-        updated = False
         for m in matches:
             if m["match_id"] == match_id:
                 m["result"] = "abandoned"
                 m["status"] = "abandoned"
-                updated = True
-        if updated:
-            write_table("matches", matches)
-
+        write_table("matches", matches)
         return ABANDONED
 
     delete_match_points(match_id)
