@@ -241,34 +241,31 @@ def get_user_vote(user_id: str, match_id: str) -> dict | None:
 
 def cast_vote(user_id: str, match_id: str, tid: str, vote: str):
     ensure_registered(user_id, tid)   # auto-register on first vote
-    # Single read-modify-write — removes duplicate and inserts in one GCS write
-    votes = read_table("votes")
-    votes = [v for v in votes
+    # Build new votes list locally, write async to GCS
+    from data.gcs import read_table as _rt, write_table as _wt
+    votes = [v for v in _rt("votes")
              if not (v["user_id"] == user_id and v["match_id"] == match_id)]
     votes.append({
         "vote_id"      : _uid(), "user_id": user_id,
         "match_id"     : match_id, "tournament_id": tid,
         "vote"         : vote, "voted_at": _now(),
         "updated_at"   : "", "update_count": 0})
-    write_table("votes", votes)
+    _wt("votes", votes, async_write=True)   # instant local update, async GCS
 
 def update_vote(user_id: str, match_id: str, new_vote: str):
-    # Single read-modify-write — no separate delete + insert
-    votes     = read_table("votes")
-    existing  = next((v for v in votes
-                      if v["user_id"] == user_id and v["match_id"] == match_id), None)
+    from data.gcs import read_table as _rt, write_table as _wt
+    existing  = get_user_vote(user_id, match_id)
     cur_count = int((existing or {}).get("update_count", 0))
     voted_at  = (existing or {}).get("voted_at", _now())
     tid       = (existing or {}).get("tournament_id", "")
-    # Remove all existing votes for this user+match, then append updated
-    votes = [v for v in votes
-             if not (v["user_id"] == user_id and v["match_id"] == match_id)]
+    votes     = [v for v in _rt("votes")
+                 if not (v["user_id"] == user_id and v["match_id"] == match_id)]
     votes.append({
         "vote_id"      : _uid(), "user_id": user_id,
         "match_id"     : match_id, "tournament_id": tid,
         "vote"         : new_vote, "voted_at": voted_at,
         "updated_at"   : _now(), "update_count": cur_count + 1})
-    write_table("votes", votes)
+    _wt("votes", votes, async_write=True)   # instant local update, async GCS
 
 def delete_vote(user_id: str, match_id: str):
     _delete_where("votes",
