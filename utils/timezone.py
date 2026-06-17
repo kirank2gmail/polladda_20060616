@@ -122,13 +122,20 @@ def parse_utc_iso(iso_str: str) -> datetime | None:
 
 def format_ts(iso_str: str, user_timezone: str = "UTC") -> str:
     """
-    Format a stored UTC ISO timestamp for display in user's timezone.
+    Format a stored UTC ISO timestamp for display in user's local timezone.
+    Output format: Jun-15-2026 10:30 AM
     """
     dt = parse_utc_iso(iso_str)
     if not dt:
         return "—"
     try:
         tz = pytz.timezone(user_timezone)
-        return dt.astimezone(tz).strftime("%d %b %Y  %H:%M  %Z")
+        return dt.astimezone(tz).strftime("%b-%d-%Y %I:%M %p")
     except Exception:
-        return dt.strftime("%d %b %Y  %H:%M  UTC")
+        return dt.strftime("%b-%d-%Y %I:%M %p UTC")
+
+
+def fmt_ts_user(iso_str: str, user: dict) -> str:
+    """Convenience wrapper — extracts timezone from user dict."""
+    tz = (user or {}).get("timezone", "UTC") or "UTC"
+    return format_ts(iso_str, tz)
