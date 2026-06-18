@@ -170,11 +170,7 @@ def show_login():
                         st.rerun()
                     else:
                         st.error("Username or password is incorrect.")
-        st.markdown("""
-        <p style="text-align:center;color:#4a5270;font-size:0.8rem;margin-top:1rem;">
-            Your session stays active for 1 year.
-        </p>
-        """, unsafe_allow_html=True)
+
 
 
 # ── Force password change ─────────────────────────────────────────────────────
