@@ -385,11 +385,19 @@ def route(user: dict):
 user = st.session_state.get("user")
 
 if not user:
+    # Build authenticator once — it reads its own cookie and populates
+    # st.session_state["authentication_status"] and st.session_state["username"]
+    # WITHOUT rendering a visible widget (we pass it to show_login if needed).
+    # Calling login(location="unrendered") a second time causes duplicate key errors,
+    # so we only build it here and let show_login() call login() once.
     if admin_exists():
         try:
             authenticator = _build_authenticator()
             st.session_state["_authenticator"] = authenticator
-            name, auth_status, username = authenticator.login(location="unrendered")
+            # Check if authenticator already has a valid cookie session
+            # (set by a previous login — stored in st.session_state by the library)
+            auth_status = st.session_state.get("authentication_status")
+            username    = st.session_state.get("username", "")
             if auth_status and username:
                 u = get_user_by_name(username)
                 if u:
