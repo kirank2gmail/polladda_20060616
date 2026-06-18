@@ -126,13 +126,22 @@ def _build_authenticator():
             for u in users
         }
     }
-    cfg = st.secrets.get("auth", {})
-    return stauth.Authenticate(
-        credentials,
-        cookie_name        = cfg.get("cookie_name", "sportspoll_auth"),
-        key                = cfg.get("cookie_key",  "sportspoll-secret-key-change-me"),
-        cookie_expiry_days = int(cfg.get("cookie_expiry_days", 7)),
-    )
+    cfg         = st.secrets.get("auth", {})
+    cookie_name = cfg.get("cookie_name", "sportspoll_auth")
+    cookie_key  = cfg.get("cookie_key",  "sportspoll-secret-key-change-me")
+    expiry_days = int(cfg.get("cookie_expiry_days", 7))
+
+    # Parameter name changed between versions:
+    # 0.3.x → cookie_key   0.2.x → key
+    import inspect
+    sig = inspect.signature(stauth.Authenticate.__init__)
+    if "cookie_key" in sig.parameters:
+        return stauth.Authenticate(credentials, cookie_name,
+                                   cookie_key=cookie_key,
+                                   cookie_expiry_days=expiry_days)
+    else:
+        return stauth.Authenticate(credentials, cookie_name, cookie_key,
+                                   expiry_days)
 
 
 def show_login():
