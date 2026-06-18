@@ -154,7 +154,6 @@ def show_login():
         with st.form("login"):
             username = st.text_input("Username", placeholder="Enter your username")
             password = st.text_input("Password", type="password")
-            remember = st.checkbox("Keep me signed in for 7 days", value=True)
             if st.form_submit_button("Sign In", type="primary",
                                      use_container_width=True):
                 if not username.strip():
@@ -166,15 +165,14 @@ def show_login():
                         st.session_state["page"]      = "home"
                         st.session_state["_last_nav"] = "home"
                         log_login(u["user_id"])
-                        if remember:
-                            token = create_session(u["user_id"])
-                            set_session_token(token)
+                        token = create_session(u["user_id"])
+                        set_session_token(token)
                         st.rerun()
                     else:
                         st.error("Username or password is incorrect.")
         st.markdown("""
         <p style="text-align:center;color:#4a5270;font-size:0.8rem;margin-top:1rem;">
-            Signed-in sessions last 7 days on the same browser.
+            Your session stays active for 1 year.
         </p>
         """, unsafe_allow_html=True)
 
