@@ -50,23 +50,8 @@ def _read_valid() -> list[dict]:
     return valid
 
 
-def _get_fingerprint() -> str:
-    """
-    Return a simple browser fingerprint from request headers.
-    Binds the session to the specific browser that created it.
-    If headers are unavailable, returns empty string (no binding).
-    """
-    try:
-        from streamlit.web.server.websocket_headers import _get_websocket_headers
-        headers = _get_websocket_headers()
-        ua = headers.get("User-Agent", "") if headers else ""
-        return ua[:120]   # truncate for storage
-    except Exception:
-        return ""
-
-
 def create_session(user_id: str) -> str:
-    """Create a server-side session bound to this browser, return the token."""
+    """Create a server-side session, return the token."""
     token    = str(uuid.uuid4()).replace("-", "")
     expires  = (datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)).isoformat()
     sessions = _read_valid()
@@ -75,7 +60,6 @@ def create_session(user_id: str) -> str:
     sessions.append({
         "token"      : token,
         "user_id"    : user_id,
-        "fingerprint": _get_fingerprint(),
         "created_at" : _now(),
         "expires"    : expires,
     })
@@ -84,22 +68,12 @@ def create_session(user_id: str) -> str:
 
 
 def validate_session(token: str) -> str | None:
-    """
-    Validate token. Returns user_id if:
-      - Token exists and not expired
-      - Browser fingerprint matches (if fingerprint was stored)
-    Returns None otherwise.
-    """
+    """Validate token, return user_id if valid else None."""
     if not token:
         return None
     sessions = _read_valid()
-    current_fp = _get_fingerprint()
     for s in sessions:
         if s.get("token") == token:
-            stored_fp = s.get("fingerprint", "")
-            # If fingerprint was stored, it must match
-            if stored_fp and current_fp and stored_fp != current_fp:
-                return None   # different browser — reject
             return s["user_id"]
     return None
 
