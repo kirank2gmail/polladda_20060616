@@ -28,9 +28,10 @@ from data.db import (
     get_all_users, get_user_by_name, get_user_by_id,
     verify_password, change_password, admin_exists,
     create_user, get_display_name, update_nickname,
-    update_user_timezone
+    update_user_timezone, is_legacy_password
 )
 from utils.timezone import COMMON_TIMEZONES
+import streamlit_authenticator as stauth
 from data.activity_log import log_login
 import pytz
 
@@ -77,6 +78,12 @@ def render_navbar(user: dict):
         f"👤 {nick}</div>", unsafe_allow_html=True)
 
     if c_out.button("Sign Out", use_container_width=True, key="signout_btn"):
+        auth = st.session_state.get("_authenticator")
+        if auth:
+            try:
+                auth.logout()
+            except Exception:
+                pass
         for k in ("user","page","match_id","tournament_id","_last_nav"):
             st.session_state[k] = None if k == "user" else "home"
         st.rerun()
@@ -102,6 +109,31 @@ def render_navbar(user: dict):
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
+
+def _build_authenticator():
+    """
+    Build stauth.Authenticate from GCS users.
+    Key = user's name (lowercased, spaces stripped) — what they type to login.
+    Matches existing login behaviour where users enter their display name.
+    """
+    users = get_all_users()
+    credentials = {
+        "usernames": {
+            u["name"].strip().lower(): {
+                "name"    : u.get("name", ""),
+                "password": u.get("password_hash", ""),
+            }
+            for u in users
+        }
+    }
+    cfg = st.secrets.get("auth", {})
+    return stauth.Authenticate(
+        credentials,
+        cookie_name        = cfg.get("cookie_name", "sportspoll_auth"),
+        key                = cfg.get("cookie_key",  "sportspoll-secret-key-change-me"),
+        cookie_expiry_days = int(cfg.get("cookie_expiry_days", 7)),
+    )
+
 
 def show_login():
     _, col, _ = st.columns([1, 2, 1])
@@ -138,27 +170,25 @@ def show_login():
                         st.rerun()
             return
 
-        # Normal login — plain text field, NOT a dropdown
-        with st.form("login"):
-            username = st.text_input(
-                "Username",
-                placeholder="Enter your username",
-            )
-            password = st.text_input("Password", type="password")
-            if st.form_submit_button("Sign In", type="primary",
-                                     use_container_width=True):
-                if not username.strip():
-                    st.error("Please enter your username.")
-                else:
-                    u = get_user_by_name(username.strip())
-                    if u and verify_password(u["user_id"], password):
-                        st.session_state["user"]      = u
-                        st.session_state["page"]      = "home"
-                        st.session_state["_last_nav"] = "home"
-                        log_login(u["user_id"])
-                        st.rerun()
-                    else:
-                        st.error("Username or password is incorrect.")
+    # Normal login via streamlit-authenticator (handles cookie restore too)
+    authenticator = _build_authenticator()
+    st.session_state["_authenticator"] = authenticator
+    authenticator.login(location="main",
+                        fields={"Form name": "",
+                                "Username" : "Username",
+                                "Password" : "Password",
+                                "Login"    : "Sign In"})
+    if st.session_state.get("authentication_status") is False:
+        st.error("Username or password is incorrect.")
+    elif st.session_state.get("authentication_status"):
+        # username = the key used in credentials = name.lower()
+        username = st.session_state.get("username", "")
+        u = get_user_by_name(username)   # looks up by name (case-insensitive)
+        if u:
+            st.session_state["user"]      = u
+            st.session_state["page"]      = "home"
+            st.session_state["_last_nav"] = "home"
+            st.rerun()
 
 
 # ── Force password change ─────────────────────────────────────────────────────
@@ -167,7 +197,13 @@ def show_change_password(user: dict):
     _, col, _ = st.columns([1, 2, 1])
     with col:
         st.title("🔑 Set Your Password")
-        st.info("You must set a new password before continuing.")
+        if st.session_state.get("_legacy_pw_reset"):
+            st.warning(
+                "We've upgraded our password security. "
+                "Please set a new password to continue."
+            )
+        else:
+            st.info("You must set a new password before continuing.")
         with st.form("change_pw"):
             pw1 = st.text_input("New password (min 6 chars)", type="password")
             pw2 = st.text_input("Confirm new password",       type="password")
@@ -272,10 +308,34 @@ def route(user: dict):
 user = st.session_state.get("user")
 
 if not user:
+    # Try to restore session from authenticator cookie
+    if admin_exists():
+        try:
+            authenticator = _build_authenticator()
+            st.session_state["_authenticator"] = authenticator
+            name, auth_status, username = authenticator.login(
+                location="unrendered"
+            )
+            if auth_status and username:
+                # username = name.lower() key from credentials
+                u = get_user_by_name(username)
+                if u:
+                    st.session_state["user"]      = u
+                    st.session_state["page"]      = "home"
+                    st.session_state["_last_nav"] = "home"
+                    user = u
+        except Exception:
+            pass
+
+if not user:
     show_login()
     st.stop()
 
-if user.get("must_change_password"):
+# Force password reset for legacy SHA-256 passwords
+if user.get("must_change_password") or is_legacy_password(user["user_id"]):
+    if not user.get("must_change_password"):
+        # Legacy password detected — force reset with explanation
+        st.session_state["_legacy_pw_reset"] = True
     show_change_password(user)
     st.stop()
 
