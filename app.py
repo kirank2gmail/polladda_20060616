@@ -154,7 +154,6 @@ def show_login():
                         st.session_state["user"]      = u
                         st.session_state["page"]      = "home"
                         st.session_state["_last_nav"] = "home"
-                        log_login(u["user_id"])
                         st.rerun()
                     else:
                         st.error("Username or password is incorrect.")
