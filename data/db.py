@@ -17,7 +17,14 @@ from data.gcs import read_table, write_table
 
 def _now():          return datetime.utcnow().isoformat()
 def _uid():          return str(uuid.uuid4())[:8]
-def _hash(pw: str):  return hashlib.sha256(pw.encode()).hexdigest()
+def _hash(pw: str):  return hashlib.sha256(pw.encode()).hexdigest()   # legacy SHA-256
+
+def _hash_bcrypt(pw: str) -> str:
+    import bcrypt
+    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+
+def _is_bcrypt(h: str) -> bool:
+    return h.startswith("$2b$") or h.startswith("$2a$")
 
 def _insert(table: str, record: dict):
     rows = read_table(table); rows.append(record); write_table(table, rows)
@@ -75,13 +82,30 @@ def create_user(name: str, password: str, role: str = "user",
     return user
 
 def verify_password(user_id: str, password: str) -> bool:
+    """Verify password — supports both bcrypt (new) and SHA-256 (legacy)."""
+    import bcrypt
     u = get_user_by_id(user_id)
-    return bool(u and u.get("password_hash") == _hash(password))
+    if not u:
+        return False
+    h = u.get("password_hash", "")
+    if _is_bcrypt(h):
+        return bcrypt.checkpw(password.encode(), h.encode())
+    # Legacy SHA-256 — valid but will force password reset on next login
+    return h == _hash(password)
+
+def is_legacy_password(user_id: str) -> bool:
+    """Returns True if user still has a SHA-256 (legacy) password hash."""
+    u = get_user_by_id(user_id)
+    if not u:
+        return False
+    return not _is_bcrypt(u.get("password_hash", ""))
 
 def change_password(user_id: str, new_password: str):
+    """Always stores password as bcrypt hash going forward."""
+    new_hash = _hash_bcrypt(new_password)
     _update_where("users",
         lambda r: r["user_id"] == user_id,
-        lambda r: r.update({"password_hash"       : _hash(new_password),
+        lambda r: r.update({"password_hash"       : new_hash,
                              "must_change_password": False}))
 
 def update_nickname(user_id: str, nickname: str):
