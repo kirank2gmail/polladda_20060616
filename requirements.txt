@@ -5,4 +5,7 @@ python-dateutil
 google-cloud-storage
 google-auth
 Pillow
+matplotlib
 cryptography
+bcrypt
+streamlit-authenticator==0.3.3
